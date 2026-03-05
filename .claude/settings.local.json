@@ -130,7 +130,8 @@
       "Bash(git config user.name \"Claude\")",
       "Bash(git config user.email \"claude@anthropic.com\")",
       "Bash(git add -A)",
-      "Bash(git commit -m \"Initial commit: VC Connections networking tool:*)"
+      "Bash(git commit -m \"Initial commit: VC Connections networking tool:*)",
+      "Bash(cat .github/workflows/*.yml)"
     ]
   }
 }
