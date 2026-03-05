@@ -1,0 +1,33 @@
+[project]
+name = "connections"
+version = "0.1.0"
+description = "VC networking tool that maps warm introduction paths via shared work history"
+requires-python = ">=3.9"
+dependencies = [
+    "notion-client>=2.0,<2.3",
+    "streamlit>=1.30",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "anthropic>=0.40",
+    "google-genai>=1.0",
+    "eval_type_backport>=0.2; python_version < '3.10'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
