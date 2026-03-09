@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--sections",
         nargs="+",
         default=[],
-        choices=["professional", "expertise", "content", "social", "news"],
+        choices=["professional", "expertise", "activity", "thesis", "social"],
         help="Run only specific sections",
     )
     parser.add_argument(

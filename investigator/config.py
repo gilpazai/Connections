@@ -27,9 +27,9 @@ class InvestigatorConfig:
         default_factory=lambda: [
             "professional",
             "expertise",
-            "content",
             "social",
-            "news",
+            "activity",
+            "thesis",
         ],
         repr=False,
     )

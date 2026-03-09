@@ -15,20 +15,20 @@ from investigator.report.formatter import ReportFormatter
 from investigator.report.writer import ReportWriter
 from investigator.search.engine import SearchEngine
 from investigator.sections.base import BaseSection, SectionResult
-from investigator.sections.content import ContentSection
 from investigator.sections.expertise import ExpertiseSection
-from investigator.sections.news import NewsSection
 from investigator.sections.professional import ProfessionalSection
 from investigator.sections.social import SocialSection
+from investigator.sections.thesis import ThesisSection
+from investigator.sections.activity import ActivitySection
 
 logger = logging.getLogger(__name__)
 
 SECTION_CLASSES: dict[str, type[BaseSection]] = {
     "professional": ProfessionalSection,
     "expertise": ExpertiseSection,
-    "content": ContentSection,
+    "thesis": ThesisSection,
+    "activity": ActivitySection,
     "social": SocialSection,
-    "news": NewsSection,
 }
 
 

@@ -12,9 +12,9 @@ class ReportFormatter:
     SECTION_ORDER = [
         "Professional Profile",
         "Expertise & Topics",
-        "Content Analysis",
+        "Recent Activity",
+        "Thesis & Worldview",
         "Social Footprint",
-        "News & Public Claims",
     ]
 
     def format(
@@ -39,8 +39,30 @@ class ReportFormatter:
             if result is None:
                 continue
 
+            markdown = result.markdown
+            if name == "Social Footprint":
+                lines = markdown.split('\n')
+                table_lines = []
+                in_list = False
+                for line in lines:
+                    stripped = line.strip()
+                    if stripped.startswith("- ") or stripped.startswith("* "):
+                        if not in_list:
+                            table_lines.extend(["| Platform | Details |", "|---|---|"])
+                            in_list = True
+                        content = stripped[2:].strip()
+                        if ":" in content:
+                            plat, rest = content.split(":", 1)
+                            table_lines.append(f"| **{plat.strip()}** | {rest.strip()} |")
+                        else:
+                            table_lines.append(f"| | {content} |")
+                    else:
+                        in_list = False
+                        table_lines.append(line)
+                markdown = '\n'.join(table_lines)
+
             parts.append(f"## {i}. {name}\n")
-            parts.append(result.markdown)
+            parts.append(markdown)
 
             if result.sources:
                 parts.append("\n### Sources\n")

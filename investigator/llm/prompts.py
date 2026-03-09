@@ -10,6 +10,9 @@ BASE_SYSTEM = (
     "4. Do not fabricate any facts, dates, titles, or claims.\n"
     "5. Use professional, neutral tone.\n"
     "6. Format output in Markdown.\n"
+    "7. Identity Anchor: Discard information regarding unrelated industries "
+    "(e.g., stock tickers, academic activism) if they don't match the "
+    "target's verified company/industry.\n"
 )
 
 # ── Section-specific prompts ─────────────────────────────────────────
@@ -18,6 +21,8 @@ PROFESSIONAL_SYSTEM = BASE_SYSTEM + (
     "\nYou are writing the 'Professional Profile' section.\n"
     "Cover: current role & organization, career history, education, "
     "key hard skills, industry/domain.\n"
+    "Hunt for 'Founder DNA': military intelligence units (e.g., 8200/9900), "
+    "academic awards, and rapid career progression.\n"
     "Write 2-4 short paragraphs. If data is sparse, produce a shorter "
     "summary and note what could not be determined."
 )
@@ -29,12 +34,14 @@ EXPERTISE_SYSTEM = BASE_SYSTEM + (
     "Format: 3-7 bullet points with evidence, then a short concluding paragraph."
 )
 
-CONTENT_SYSTEM = BASE_SYSTEM + (
-    "\nYou are writing the 'Content Analysis' section.\n"
-    "Analyze published content (blogs, articles, whitepapers, talks).\n"
-    "Cover: notable pieces with titles/platforms/dates, key themes, "
-    "perspectives on topics, publishing frequency.\n"
-    "If very little content is found, state that explicitly."
+THESIS_SYSTEM = BASE_SYSTEM + (
+    "\nYou are writing the 'Thesis & Worldview' section.\n"
+    "Identify the founder's unique worldview, perspective on the market, "
+    "and core thesis.\n"
+    "Write 1-2 paragraphs summarizing their worldview. Do NOT include subheadings "
+    "like 'Potential Unfair Advantage', 'Notable Statements', or 'Themes'. "
+    "Keep it entirely in flowing prose.\n"
+    "If very little worldview context is found, state that explicitly."
 )
 
 SOCIAL_SYSTEM = BASE_SYSTEM + (
@@ -47,12 +54,14 @@ SOCIAL_SYSTEM = BASE_SYSTEM + (
     "information not visible in the provided material."
 )
 
-NEWS_SYSTEM = BASE_SYSTEM + (
-    "\nYou are writing the 'News & Public Claims' section.\n"
-    "Summarize news coverage and public statements.\n"
-    "Cover: chronological list of mentions (most recent first) with date/source/"
-    "summary, notable public claims or quotes, any controversies.\n"
-    "If no significant coverage found, state that clearly."
+ACTIVITY_SYSTEM = BASE_SYSTEM + (
+    "\nYou are writing the 'Recent Activity' section based on raw LinkedIn activity page text.\n"
+    "Extract the last 5 posts and 5 recent comments made by the target person.\n"
+    "Format as a simple Markdown list separated into 'Posts' and 'Comments'.\n"
+    "Crucially: Use the provided CURRENT DATE to accurately calculate the year and exact date from relative times (e.g. '1w', '2mo').\n"
+    "Crucially: ONLY extract public posts and public comments. IGNORE any text that resembles a private message, direct message, or chat interface.\n"
+    "Do not invent any activity if it is not present in the text.\n"
+    "If insufficient public activity is found, provide what is available and note the limitation."
 )
 
 # ── User prompt templates ─────────────────────────────────────────────
@@ -78,6 +87,17 @@ def make_social_user_prompt(
         f"=== SEARCH RESULTS ===\n{snippets}\n=== END SEARCH RESULTS ==="
     )
 
+
+def make_activity_user_prompt(name: str, company: str | None, text: str) -> str:
+    from datetime import datetime
+    current_date = datetime.now().strftime("%B %d, %Y")
+    company_clause = f" at {company}" if company else ""
+    return (
+        f"Below is raw text extracted from the public LinkedIn activity pages of {name}{company_clause}.\n"
+        f"CURRENT DATE IS: {current_date}\n\n"
+        f"Synthesize this into a report section.\n\n"
+        f"=== RAW ACTIVITY TEXT ===\n{text}\n=== END RAW ACTIVITY TEXT ==="
+    )
 
 # ── Map-reduce intermediate prompt ───────────────────────────────────
 
