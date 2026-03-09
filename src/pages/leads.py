@@ -19,6 +19,36 @@ def _get_store() -> NotionStore:
     return st.session_state.notion_store
 
 
+@st.dialog("Run AI Research on imported leads?")
+def _batch_research_dialog(leads_info: list[dict]) -> None:
+    """Confirmation dialog to research all newly imported leads."""
+    st.write(
+        f"**{len(leads_info)}** leads were just imported. "
+        "Run AI research on each one to build their profiles and extract work history?"
+    )
+    st.caption("Each person takes ~30 seconds. Total: ~" + str(len(leads_info) * 30) + "s")
+    col_yes, col_no = st.columns(2)
+    with col_yes:
+        if st.button("Research all", type="primary", use_container_width=True):
+            store = _get_store()
+            progress = st.progress(0, text="Starting research...")
+            for i, info in enumerate(leads_info):
+                progress.progress((i + 1) / len(leads_info), text=f"Researching {info['name']}...")
+                try:
+                    from src.data.investigator_runner import run_research
+                    from src.pages._enrichment_ui import do_enrich
+                    report_md = run_research(info["name"], company=info.get("company"))
+                    do_enrich(store, info["name"], "Lead", report_md)
+                except Exception as e:
+                    st.warning(f"Research failed for {info['name']}: {e}")
+            progress.progress(1.0, text="All research complete!")
+            st.success(f"Research complete for {len(leads_info)} leads.")
+            st.rerun()
+    with col_no:
+        if st.button("Skip for now", use_container_width=True):
+            st.rerun()
+
+
 st.title("Leads")
 st.caption("Manage monthly target leads for warm introductions.")
 
@@ -64,11 +94,13 @@ with st.expander("Import from Dealigence CSV", expanded=False):
             skipped_dupes = 0
             created_history = 0
             progress = st.progress(0, text="Importing leads...")
+            imported_names = []
 
             for i, lead in enumerate(leads_parsed):
                 try:
                     store.create_lead(lead)
                     created_leads += 1
+                    imported_names.append({"name": lead.name, "company": lead.company_current or ""})
                 except ValueError:
                     skipped_dupes += 1
                 except Exception as e:
@@ -99,6 +131,9 @@ with st.expander("Import from Dealigence CSV", expanded=False):
             if skipped_dupes:
                 msg += f" Skipped **{skipped_dupes}** duplicates."
             st.success(msg)
+
+            if imported_names:
+                st.session_state["pending_batch_research"] = imported_names
             st.rerun()
         except Exception as e:
             st.error(f"CSV import failed: {e}")
@@ -124,6 +159,7 @@ with st.expander("Import Lead Batch (paste)", expanded=False):
             lines = [l.strip() for l in raw_input.strip().split("\n") if l.strip()]
             created = 0
             skipped = 0
+            imported_names = []
             for line in lines:
                 parts = [p.strip() for p in line.split(",")]
                 name = parts[0] if len(parts) > 0 else ""
@@ -141,6 +177,7 @@ with st.expander("Import Lead Batch (paste)", expanded=False):
                     )
                     store.create_lead(lead)
                     created += 1
+                    imported_names.append({"name": name, "company": company})
                 except ValueError:
                     skipped += 1
                 except Exception as e:
@@ -150,6 +187,8 @@ with st.expander("Import Lead Batch (paste)", expanded=False):
                 if skipped:
                     msg += f" Skipped {skipped} duplicates."
                 st.success(msg)
+                if imported_names:
+                    st.session_state["pending_batch_research"] = imported_names
                 st.rerun()
 
 # Add single lead
@@ -177,7 +216,9 @@ with st.expander("Add Single Lead", expanded=False):
                     batch=batch,
                 )
                 store.create_lead(lead)
-                st.success(f"Added lead: {name}. Ask Claude Code: `enrich {name}` to fetch work history and discover matches.")
+                st.success(f"Added lead: {name}.")
+                st.session_state["post_add_research_name"] = name
+                st.session_state["post_add_research_company"] = company
                 st.rerun()
             except ValueError as e:
                 st.warning(str(e))
@@ -185,6 +226,26 @@ with st.expander("Add Single Lead", expanded=False):
                 st.error(f"Failed to add lead: {e}")
         elif submitted:
             st.warning("Name is required.")
+
+# Post-add research prompt (single lead)
+if "post_add_research_name" in st.session_state:
+    _name = st.session_state.pop("post_add_research_name")
+    _company = st.session_state.pop("post_add_research_company", "")
+    st.info(f"**{_name}** was added. Run AI research to build their profile?")
+    col_yes, col_no, _ = st.columns([1, 1, 4])
+    with col_yes:
+        if st.button("Research now", key="post_add_lead_research_yes", type="primary"):
+            st.session_state["research_person_name"] = _name
+            st.session_state["research_person_company"] = _company
+            st.session_state["research_person_type"] = "Lead"
+            st.switch_page("src/pages/research.py")
+    with col_no:
+        if st.button("Skip", key="post_add_lead_research_no"):
+            st.rerun()
+
+# Batch research dialog (after CSV/paste import)
+if "pending_batch_research" in st.session_state:
+    _batch_research_dialog(st.session_state.pop("pending_batch_research"))
 
 st.divider()
 
@@ -246,17 +307,18 @@ if leads:
     except Exception:
         grouped_wh = {}
 
-    # ── Per-row enrich buttons ───────────────────────────────────────────────
-    hdr0, hdr1, hdr2, hdr3, hdr4, hdr5 = st.columns([1, 3, 3, 2, 2, 2])
-    hdr1.markdown("**Name**")
-    hdr2.markdown("**Company**")
-    hdr3.markdown("**Priority**")
-    hdr4.markdown("**Batch**")
-    hdr5.markdown("**Status**")
+    # ── Per-row buttons ──────────────────────────────────────────────────────
+    hdr0, hdr1, hdr2, hdr3, hdr4, hdr5, hdr6 = st.columns([1, 1, 3, 3, 2, 2, 2])
+    hdr1.markdown("**Actions**")
+    hdr2.markdown("**Name**")
+    hdr3.markdown("**Company**")
+    hdr4.markdown("**Priority**")
+    hdr5.markdown("**Batch**")
+    hdr6.markdown("**Status**")
 
     for l in leads:
-        col_btn, col_name, col_company, col_priority, col_batch, col_status = st.columns([1, 3, 3, 2, 2, 2])
-        with col_btn:
+        col_enrich, col_research, col_name, col_company, col_priority, col_batch, col_status = st.columns([1, 1, 3, 3, 2, 2, 2])
+        with col_enrich:
             has_history = len(lookup_work_history(l.dealigence_person_id, l.name, grouped_wh)) > 0
             label = "Re-enrich" if has_history else "Enrich"
             if st.button(label, key=f"enrich_l_{l.notion_page_id or l.name}"):
@@ -275,6 +337,12 @@ if leads:
                             st.rerun()
                         except Exception as e:
                             st.error(f"Enrichment failed: {e}")
+        with col_research:
+            if st.button("Research", key=f"research_l_{l.notion_page_id or l.name}"):
+                st.session_state["research_person_name"] = l.name
+                st.session_state["research_person_company"] = l.company_current or ""
+                st.session_state["research_person_type"] = "Lead"
+                st.switch_page("src/pages/research.py")
         col_name.write(l.name)
         col_company.write(l.company_current or "")
         col_priority.write(l.priority or "")

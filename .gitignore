@@ -9,3 +9,6 @@ build/
 .streamlit/
 .DS_Store
 .browser_profile/
+investigator/cache/
+.cache/
+report_*.md

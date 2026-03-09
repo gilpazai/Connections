@@ -16,6 +16,7 @@ def main():
         "Contacts": st.Page("src/pages/contacts.py", title="Contacts", icon=":material/people:"),
         "Leads": st.Page("src/pages/leads.py", title="Leads", icon=":material/target:"),
         "Matches": st.Page("src/pages/matches.py", title="Matches", icon=":material/link:"),
+        "Research": st.Page("src/pages/research.py", title="Research", icon=":material/search:"),
         "Settings": st.Page("src/pages/settings.py", title="Settings", icon=":material/settings:"),
     }
     pg = st.navigation(list(pages.values()))

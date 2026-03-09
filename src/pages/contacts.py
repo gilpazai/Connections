@@ -52,6 +52,8 @@ with st.expander("Add New Contact", expanded=False):
                 )
                 store.create_contact(contact)
                 st.success(f"Added contact: {name}.")
+                st.session_state["post_add_research_name"] = name
+                st.session_state["post_add_research_company"] = company
                 st.rerun()
             except ValueError as e:
                 st.warning(str(e))
@@ -59,6 +61,22 @@ with st.expander("Add New Contact", expanded=False):
                 st.error(f"Failed to add contact: {e}")
         elif submitted:
             st.warning("Name is required.")
+
+# Post-add research prompt
+if "post_add_research_name" in st.session_state:
+    _name = st.session_state.pop("post_add_research_name")
+    _company = st.session_state.pop("post_add_research_company", "")
+    st.info(f"**{_name}** was added. Run AI research to build their profile?")
+    col_yes, col_no, _ = st.columns([1, 1, 4])
+    with col_yes:
+        if st.button("Research now", key="post_add_research_yes", type="primary"):
+            st.session_state["research_person_name"] = _name
+            st.session_state["research_person_company"] = _company
+            st.session_state["research_person_type"] = "Contact"
+            st.switch_page("src/pages/research.py")
+    with col_no:
+        if st.button("Skip", key="post_add_research_no"):
+            st.rerun()
 
 st.divider()
 
@@ -88,16 +106,17 @@ if contacts:
     except Exception:
         grouped_wh = {}
 
-    # ── Per-row enrich buttons ───────────────────────────────────────────────
-    hdr0, hdr1, hdr2, hdr3, hdr4 = st.columns([1, 3, 3, 2, 2])
-    hdr1.markdown("**Name**")
-    hdr2.markdown("**Company**")
-    hdr3.markdown("**Strength**")
-    hdr4.markdown("**Status**")
+    # ── Per-row buttons ──────────────────────────────────────────────────────
+    hdr0, hdr1, hdr2, hdr3, hdr4, hdr5 = st.columns([1, 1, 3, 3, 2, 2])
+    hdr1.markdown("**Actions**")
+    hdr2.markdown("**Name**")
+    hdr3.markdown("**Company**")
+    hdr4.markdown("**Strength**")
+    hdr5.markdown("**Status**")
 
     for c in contacts:
-        col_btn, col_name, col_company, col_strength, col_status = st.columns([1, 3, 3, 2, 2])
-        with col_btn:
+        col_enrich, col_research, col_name, col_company, col_strength, col_status = st.columns([1, 1, 3, 3, 2, 2])
+        with col_enrich:
             label = "Enrich" if c.last_enriched is None else "Re-enrich"
             if st.button(label, key=f"enrich_c_{c.notion_page_id or c.name}"):
                 if not c.linkedin_url:
@@ -115,6 +134,12 @@ if contacts:
                             st.rerun()
                         except Exception as e:
                             st.error(f"Enrichment failed: {e}")
+        with col_research:
+            if st.button("Research", key=f"research_c_{c.notion_page_id or c.name}"):
+                st.session_state["research_person_name"] = c.name
+                st.session_state["research_person_company"] = c.company_current or ""
+                st.session_state["research_person_type"] = "Contact"
+                st.switch_page("src/pages/research.py")
         col_name.write(c.name)
         col_company.write(c.company_current or "")
         col_strength.write(c.relationship_strength or "")
