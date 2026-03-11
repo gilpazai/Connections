@@ -69,12 +69,16 @@ def run_research(name: str, company: str | None = None, force_refresh: bool = Fa
 
     google_api_key = settings.google_api_key or None
     ollama_model = settings.ollama_model
+    openai_api_key = settings.openai_api_key or None
+    openai_model = settings.openai_model or "gpt-4o-mini"
 
     config = InvestigatorConfig(
         name=name,
         company=company or None,
         model=ollama_model,
         gemini_api_key=google_api_key,
+        openai_api_key=openai_api_key,
+        openai_model=openai_model,
         output_path="",  # suppress file output
         use_cache=not force_refresh,
     )

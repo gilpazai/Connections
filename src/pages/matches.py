@@ -26,22 +26,28 @@ st.caption("Discovered warm introduction paths between your contacts and leads."
 
 store = _get_store()
 
-# Filters
-col_f1, col_f2 = st.columns(2)
-with col_f1:
-    status_filter = st.selectbox(
-        "Filter by Status",
-        ["All"] + STATUS_OPTIONS,
-        index=0,
-    )
-with col_f2:
-    confidence_filter = st.selectbox(
-        "Filter by Confidence",
-        ["All", "High", "Medium", "Low"],
-        index=0,
-    )
+# ── Filters ──────────────────────────────────────────────────────────────────
 
-if st.button("Recheck Matches"):
+col_filters, col_recheck = st.columns([5, 1])
+with col_filters:
+    status_filter = st.pills(
+        "Status",
+        ["All"] + STATUS_OPTIONS,
+        default="All",
+        key="matches_status_filter",
+    )
+with col_recheck:
+    st.write("")
+    recheck_btn = st.button("Recheck", help="Re-run matching against all enriched contacts and leads")
+
+confidence_filter = st.pills(
+    "Confidence",
+    ["All", "High", "Medium", "Low"],
+    default="All",
+    key="matches_confidence_filter",
+)
+
+if recheck_btn:
     from src.engine.matcher import run_matching, store_new_matches, _group_histories_by_name
     with st.spinner("Running matching..."):
         contact_entries = store.get_all_work_history(person_type="Contact")
@@ -57,7 +63,8 @@ if st.button("Recheck Matches"):
             if created:
                 st.rerun()
 
-# Load matches
+# ── Load matches ─────────────────────────────────────────────────────────────
+
 try:
     matches = store.get_all_matches(
         status=None if status_filter == "All" else status_filter,
@@ -71,9 +78,35 @@ if not matches:
     st.info("No matches found. Matches are created automatically when you import leads or enrich people.")
     st.stop()
 
-st.caption(f"{len(matches)} matches shown.")
+# ── Pipeline metrics ─────────────────────────────────────────────────────────
 
-# Build editable dataframe
+all_matches = matches
+if status_filter != "All" or confidence_filter != "All":
+    try:
+        all_matches = store.get_all_matches()
+    except Exception:
+        all_matches = matches
+
+pipeline_counts = {}
+for m in all_matches:
+    s = m.status if m.status in STATUS_OPTIONS else "New"
+    pipeline_counts[s] = pipeline_counts.get(s, 0) + 1
+
+metric_cols = st.columns(len(STATUS_OPTIONS))
+for i, status in enumerate(STATUS_OPTIONS):
+    with metric_cols[i]:
+        st.metric(status, pipeline_counts.get(status, 0))
+
+# ── Save button + count (above the table) ────────────────────────────────────
+
+col_save, col_info = st.columns([1, 4])
+with col_save:
+    save_btn = st.button("Save Changes", type="primary")
+with col_info:
+    st.caption(f"{len(matches)} matches shown.")
+
+# ── Editable table ───────────────────────────────────────────────────────────
+
 rows = []
 page_ids = []
 original_statuses = []
@@ -83,15 +116,15 @@ for m in matches:
     status = m.status if m.status in STATUS_OPTIONS else "New"
     rows.append({
         "Contact": m.contact_name,
-        "Contact LinkedIn": m.contact_linkedin,
         "Lead": m.lead_name,
-        "Lead LinkedIn": m.lead_linkedin,
-        "Lead Company": m.lead_company,
         "Shared Company": m.shared_company,
         "Overlap (mo)": m.overlap_months,
         "Confidence": m.confidence,
         "Status": status,
         "Notes": m.notes,
+        "Contact LinkedIn": m.contact_linkedin,
+        "Lead LinkedIn": m.lead_linkedin,
+        "Lead Company": m.lead_company,
         "Date Updated": m.date_updated.isoformat() if m.date_updated else "",
     })
     page_ids.append(m.notion_page_id)
@@ -105,28 +138,30 @@ edited_df = st.data_editor(
     use_container_width=True,
     hide_index=True,
     num_rows="fixed",
+    column_order=[
+        "Contact", "Lead", "Shared Company", "Overlap (mo)",
+        "Confidence", "Status", "Notes",
+        "Contact LinkedIn", "Lead LinkedIn", "Lead Company", "Date Updated",
+    ],
     column_config={
         "Contact": st.column_config.TextColumn("Contact", disabled=True),
-        "Contact LinkedIn": st.column_config.LinkColumn("Contact LinkedIn"),
         "Lead": st.column_config.TextColumn("Lead", disabled=True),
-        "Lead LinkedIn": st.column_config.LinkColumn("Lead LinkedIn"),
-        "Lead Company": st.column_config.TextColumn("Lead Company", disabled=True),
         "Shared Company": st.column_config.TextColumn("Shared Company", disabled=True),
         "Overlap (mo)": st.column_config.NumberColumn("Overlap (mo)", disabled=True),
         "Confidence": st.column_config.TextColumn("Confidence", disabled=True),
-        "Status": st.column_config.SelectboxColumn(
-            "Status",
-            options=STATUS_OPTIONS,
-            required=True,
-        ),
+        "Status": st.column_config.SelectboxColumn("Status", options=STATUS_OPTIONS, required=True),
         "Notes": st.column_config.TextColumn("Notes", max_chars=500),
-        "Date Updated": st.column_config.TextColumn("Date Updated", disabled=True),
+        "Contact LinkedIn": st.column_config.LinkColumn("Contact LI", width="small"),
+        "Lead LinkedIn": st.column_config.LinkColumn("Lead LI", width="small"),
+        "Lead Company": st.column_config.TextColumn("Lead Co.", disabled=True, width="small"),
+        "Date Updated": st.column_config.TextColumn("Updated", disabled=True, width="small"),
     },
     key="matches_editor",
 )
 
-# Detect and save changes
-if st.button("Save Changes", type="primary"):
+# ── Save handler ─────────────────────────────────────────────────────────────
+
+if save_btn:
     changes = 0
     for i in range(len(page_ids)):
         new_status = edited_df.iloc[i]["Status"]

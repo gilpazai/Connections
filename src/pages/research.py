@@ -28,7 +28,6 @@ st.caption("AI-powered background reports using public web sources (DuckDuckGo +
 
 # ── Person selection ───────────────────────────────────────────────────────────
 
-# If navigated from Contacts/Leads via "Research" button, person info is in session_state
 person_name = st.session_state.get("research_person_name", "")
 person_company = st.session_state.get("research_person_company", "")
 person_type = st.session_state.get("research_person_type", "")
@@ -63,15 +62,18 @@ if cached and not run_btn:
             st.rerun()
     report_md = cached
 elif run_btn and name:
-    force = run_btn and bool(cached)  # refresh if there's already a cached report
-    with st.spinner(f"Running research on **{name}**... (~30 seconds)"):
+    force = run_btn and bool(cached)
+    with st.status(f"Researching **{name}**...", expanded=True) as status_bar:
         try:
+            status_bar.write("Searching public web sources...")
             report_md = run_research(name, company=company, force_refresh=force)
-            st.success(f"Research complete for **{name}**.")
+            status_bar.update(label=f"Research complete for **{name}**.", state="complete")
         except TimeoutError:
+            status_bar.update(label="Research timed out.", state="error")
             st.error("Research timed out after 120 seconds. Try again.")
             st.stop()
         except Exception as e:
+            status_bar.update(label="Research failed.", state="error")
             st.error(f"Research failed: {e}")
             logger.exception("Research error for %s", name)
             st.stop()
@@ -82,7 +84,8 @@ else:
 
 if person_type and name:
     store = _get_store()
-    with st.expander("Extract & Store Work History", expanded=False):
+    auto_expand = bool(person_type and name)
+    with st.expander("Extract & Store Work History", expanded=auto_expand):
         st.markdown(
             "Parse the Professional Profile section of this report and store "
             "the work history in Notion (same as LinkedIn enrichment)."
@@ -100,7 +103,7 @@ if person_type and name:
                     st.success(msg)
                     for p in positions:
                         advisory = " *(advisory)*" if p.get("is_advisory") else ""
-                        st.write(f"• {p.get('title', '?')} @ {p.get('employer_name', '?')}{advisory}")
+                        st.write(f"- {p.get('title', '?')} @ {p.get('employer_name', '?')}{advisory}")
                 except Exception as e:
                     st.error(f"Failed to extract work history: {e}")
 

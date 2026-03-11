@@ -7,6 +7,7 @@ Uses the official notion-client SDK.
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from typing import Any
 
@@ -322,8 +323,10 @@ class NotionStore:
 
     def store_work_history(self, entries: list[WorkHistoryEntry]) -> int:
         """Store work history entries in Notion. Returns count of entries created."""
-        created = 0
-        for entry in entries:
+        if not entries:
+            return 0
+
+        def _create(entry: WorkHistoryEntry) -> None:
             props = {
                 "Person Name": _title(entry.person_name),
                 "Person Type": _select(entry.person_type),
@@ -341,8 +344,12 @@ class NotionStore:
                 parent={"database_id": self.work_history_db},
                 properties=props,
             )
-            created += 1
-        return created
+
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futures = [pool.submit(_create, e) for e in entries]
+            for f in as_completed(futures):
+                f.result()  # re-raise any exception
+        return len(entries)
 
     def delete_work_history_for_person(self, source_person_id: str) -> int:
         """Archive all work history entries for a person (for re-enrichment)."""
@@ -351,8 +358,7 @@ class NotionStore:
             database_id=self.work_history_db,
             filter={"property": "Source Person ID", "rich_text": {"equals": source_person_id}},
         ))
-        for page in pages:
-            self.client.pages.update(page_id=page["id"], archived=True)
+        self._archive_pages_parallel(pages)
         return len(pages)
 
     def delete_work_history_by_name(self, person_name: str) -> int:
@@ -362,9 +368,20 @@ class NotionStore:
             database_id=self.work_history_db,
             filter={"property": "Person Name", "title": {"equals": person_name}},
         ))
-        for page in pages:
-            self.client.pages.update(page_id=page["id"], archived=True)
+        self._archive_pages_parallel(pages)
         return len(pages)
+
+    def _archive_pages_parallel(self, pages: list[dict]) -> None:
+        """Archive a list of Notion pages concurrently."""
+        if not pages:
+            return
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futures = [
+                pool.submit(self.client.pages.update, page_id=p["id"], archived=True)
+                for p in pages
+            ]
+            for f in as_completed(futures):
+                f.result()
 
     def get_all_work_history(self, person_type: str | None = None) -> list[WorkHistoryEntry]:
         """Fetch all work history entries, optionally filtered by person type."""
@@ -439,6 +456,60 @@ class NotionStore:
                 )
                 count += 1
         return count
+
+    def delete_contact(self, page_id: str, person_name: str = "") -> None:
+        """Delete a contact and all associated data (work history, matches)."""
+        if person_name:
+            self.delete_work_history_by_name(person_name)
+            self.delete_matches_for_person(person_name)
+        self.client.pages.update(page_id=page_id, archived=True)
+
+    def delete_lead(self, page_id: str, person_name: str = "") -> None:
+        """Delete a lead and all associated data (work history, matches)."""
+        if person_name:
+            self.delete_work_history_by_name(person_name)
+            self.delete_matches_for_person(person_name)
+        self.client.pages.update(page_id=page_id, archived=True)
+
+    def delete_matches_for_person(self, person_name: str) -> int:
+        """Delete all matches involving a person (as contact or lead)."""
+        pages = list(iterate_paginated_api(
+            self.client.databases.query,
+            database_id=self.matches_db,
+            filter={"or": [
+                {"property": "Contact Name", "rich_text": {"equals": person_name}},
+                {"property": "Lead Name", "rich_text": {"equals": person_name}},
+            ]},
+        ))
+        self._archive_pages_parallel(pages)
+        return len(pages)
+
+    def delete_all_leads(self) -> int:
+        """Delete all leads and their associated work history. Returns count deleted."""
+        pages = list(iterate_paginated_api(
+            self.client.databases.query,
+            database_id=self.leads_db,
+        ))
+        # Delete all lead work history entries
+        lead_wh_pages = list(iterate_paginated_api(
+            self.client.databases.query,
+            database_id=self.work_history_db,
+            filter={"property": "Person Type", "select": {"equals": "Lead"}},
+        ))
+        self._archive_pages_parallel(lead_wh_pages)
+        # Delete the lead pages themselves
+        self._archive_pages_parallel(pages)
+        return len(pages)
+
+    def delete_all_matches(self) -> int:
+        """Archive all match pages. Returns count archived."""
+        pages = list(iterate_paginated_api(
+            self.client.databases.query,
+            database_id=self.matches_db,
+        ))
+        for page in pages:
+            self.client.pages.update(page_id=page["id"], archived=True)
+        return len(pages)
 
     def get_active_leads(self, batch: str | None = None) -> list[Lead]:
         """Get all leads excluding archived ones."""

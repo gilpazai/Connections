@@ -5,6 +5,10 @@ class Settings(BaseSettings):
     # Anthropic
     anthropic_api_key: str = ""
 
+    # OpenAI
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
+
     # Notion
     notion_token: str = ""
     notion_contacts_db_id: str = ""

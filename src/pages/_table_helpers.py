@@ -20,6 +20,7 @@ def work_history_columns() -> list[str]:
     cols = []
     for i in range(1, N_POSITIONS + 1):
         cols += [f"Employer {i}", f"Title {i}", f"Period {i}"]
+    cols.append("Advisory Roles")
     return cols
 
 
@@ -29,8 +30,12 @@ def position_cells(
 ) -> dict[str, str]:
     """Return a flat dict with up to N_POSITIONS positions for one table row.
 
+    Advisory roles (is_advisory=True) are excluded from the position slots and
+    instead collapsed into a single "Advisory Roles" cell
+    (e.g. "Investor @ Acme, Board Member @ Beta VC").
+
     - Not enriched: all cells are empty string.
-    - Enriched but fewer than N_POSITIONS entries: remaining cells are "N/A".
+    - Enriched but fewer than N_POSITIONS regular entries: remaining cells are "N/A".
     - Entries are sorted most-recent first (current before previous, then by start date desc).
     """
     row: dict[str, str] = {}
@@ -40,17 +45,29 @@ def position_cells(
             row[col] = ""
         return row
 
-    # Sort: current (end=None) first, then most recent start date descending
-    sorted_entries = sorted(
-        entries,
-        key=lambda e: (e.end_date is None, e.start_date or date.min),
-        reverse=True,
-    )
+    advisory = [e for e in entries if e.is_advisory]
+    regular = [e for e in entries if not e.is_advisory]
+
+    # Sort regular: most recent employment first.
+    # Priority: 2 = current with known start date (most reliable "current")
+    #           1 = current with unknown start (ambiguous, but assume recent)
+    #           0 = past (end_date set)
+    # Secondary: start_date descending (more recent start = earlier in list)
+    def _sort_key(e: WorkHistoryEntry) -> tuple:
+        if e.end_date is None and e.start_date is not None:
+            priority = 2
+        elif e.end_date is None:
+            priority = 1
+        else:
+            priority = 0
+        return (priority, (e.start_date or date.min).toordinal())
+
+    sorted_regular = sorted(regular, key=_sort_key, reverse=True)
 
     for i in range(N_POSITIONS):
         idx = i + 1
-        if i < len(sorted_entries):
-            e = sorted_entries[i]
+        if i < len(sorted_regular):
+            e = sorted_regular[i]
             row[f"Employer {idx}"] = e.employer_name
             row[f"Title {idx}"] = e.role_title
             row[f"Period {idx}"] = _format_period(e.start_date, e.end_date)
@@ -58,6 +75,13 @@ def position_cells(
             row[f"Employer {idx}"] = "N/A"
             row[f"Title {idx}"] = "N/A"
             row[f"Period {idx}"] = "N/A"
+
+    if advisory:
+        row["Advisory Roles"] = ", ".join(
+            f"{e.role_title} @ {e.employer_name}" for e in advisory
+        )
+    else:
+        row["Advisory Roles"] = ""
 
     return row
 

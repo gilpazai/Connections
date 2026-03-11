@@ -7,8 +7,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def do_enrich(store, person_name: str, person_type: str, raw_text: str):
+def do_enrich(store, person_name: str, person_type: str, raw_text: str, notion_page_id: str = ""):
     """Parse LinkedIn text, store work history, mark enriched, auto-match.
+
+    Pass notion_page_id to skip the full-table scan when the caller already
+    has the page ID (saves one extra Notion query).
 
     Returns (stored_count, positions, new_matches).
     """
@@ -50,7 +53,13 @@ def do_enrich(store, person_name: str, person_type: str, raw_text: str):
     count = store.store_work_history(entries)
     person_id = entries[0].source_person_id if entries else ""
 
-    if person_type == "Contact":
+    if notion_page_id:
+        # Fast path: caller already knows the page ID
+        if person_type == "Contact":
+            store.mark_contact_enriched(notion_page_id, person_id)
+        else:
+            store.mark_lead_enriched(notion_page_id, person_id)
+    elif person_type == "Contact":
         for c in store.get_all_contacts():
             if c.name == person_name and c.notion_page_id:
                 store.mark_contact_enriched(c.notion_page_id, person_id)
@@ -72,7 +81,7 @@ def do_enrich(store, person_name: str, person_type: str, raw_text: str):
     return count, positions, new_matches
 
 
-def enrich_from_linkedin_url(store, person_name: str, person_type: str, linkedin_url: str):
+def enrich_from_linkedin_url(store, person_name: str, person_type: str, linkedin_url: str, notion_page_id: str = ""):
     """Scrape LinkedIn experience page and enrich a person immediately.
 
     Opens a headed Chromium browser (reusing saved session), navigates to the
@@ -81,4 +90,8 @@ def enrich_from_linkedin_url(store, person_name: str, person_type: str, linkedin
     """
     from src.data.linkedin_scraper import scrape_linkedin_experience
     raw_text = scrape_linkedin_experience(linkedin_url)
-    return do_enrich(store, person_name, person_type, raw_text)
+    logger.info(
+        "Scraped LinkedIn for %s: %d chars. Preview: %.200s",
+        person_name, len(raw_text), raw_text.replace("\n", " ")[:200],
+    )
+    return do_enrich(store, person_name, person_type, raw_text, notion_page_id=notion_page_id)

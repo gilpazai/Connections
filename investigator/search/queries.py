@@ -22,11 +22,11 @@ class QueryGenerator:
     def professional_queries(self) -> list[str]:
         n, c = self._q, self._c
         return [
-            f"{n}{c} professional experience resume",
-            f"{n}{c} current role title",
+            f"{n}{c} professional experience resume -stock -ticker -valuation",
+            f"{n}{c} current role title -stock -ticker -valuation",
             f"site:linkedin.com/in {n}{c}",
-            f"{n}{c} biography about",
-            f"{n}{c} skills expertise background",
+            f"{n}{c} biography about -stock -ticker -valuation",
+            f"{n}{c} skills expertise background -stock -ticker -valuation",
         ]
 
     def expertise_queries(self) -> list[str]:
@@ -38,15 +38,20 @@ class QueryGenerator:
             f"{n}{c} conference talk presentation",
         ]
 
-    def content_queries(self) -> list[str]:
+    def thesis_queries(self) -> list[str]:
         n, c = self._q, self._c
         return [
-            f"{n}{c} blog post article",
-            f"{n}{c} whitepaper publication",
-            f"{n} author written by",
-            f"site:medium.com {n}",
-            f"site:substack.com {n}",
-            f"site:dev.to {n}",
+            f'{n} "the problem with"',
+            f"{n} interview podcast",
+            f"{n}{c} vision future",
+            f"{n} worldview perspective",
+        ]
+
+    def activity_queries(self) -> list[str]:
+        n, c = self._q, self._c
+        return [
+            f'site:linkedin.com/recent-activity {n}',
+            f'site:x.com {n} status',
         ]
 
     def social_queries(self) -> list[str]:

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import re
 from datetime import date
+
+from src.data.advisory_titles import load_advisory_titles
 
 _MONTHS = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
@@ -12,12 +13,6 @@ _MONTHS = {
     "june": 6, "july": 7, "august": 8, "september": 9,
     "october": 10, "november": 11, "december": 12,
 }
-
-_ADVISORY_PATTERNS = re.compile(
-    r"\b(?:investor|board\b|chairman|chairwoman|chairperson|"
-    r"advisor[y]?|adviser)\b",
-    re.IGNORECASE,
-)
 
 
 def parse_linkedin_date(date_str: str) -> date | None:
@@ -57,14 +52,17 @@ def parse_linkedin_date(date_str: str) -> date | None:
 def is_advisory_role(title: str) -> bool:
     """Check if a title represents a governance/advisory role.
 
-    Advisory roles (investor, board, chairman, president, advisor)
-    indicate ongoing connections — not time-bounded employment.
+    Matches case-insensitively against the configurable advisory titles list
+    (loaded from ADVISORY_TITLES in .env, defaults in advisory_titles.py).
+    "President" is excluded when the title also contains "Vice".
     """
-    if _ADVISORY_PATTERNS.search(title):
-        return True
-    t = title.lower()
-    if "president" in t and "vice" not in t:
-        return True
+    t = title.strip().lower()
+    for advisory in load_advisory_titles():
+        a = advisory.lower()
+        if a in t:
+            if a == "president" and "vice" in t:
+                continue
+            return True
     return False
 
 

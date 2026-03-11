@@ -9,6 +9,8 @@ class InvestigatorConfig:
     company: str | None = None
     model: str = "llama3.2"
     gemini_api_key: str | None = None
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4o-mini"
     output_path: str = ""
     use_cache: bool = True
     sections: list[str] = field(default_factory=list)

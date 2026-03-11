@@ -13,7 +13,7 @@ class LLMError(Exception):
 
 
 class LLMClient:
-    """Unified LLM interface: Ollama primary, Gemini fallback."""
+    """Unified LLM interface: OpenAI primary, Ollama secondary, Gemini fallback."""
 
     def __init__(self, config: InvestigatorConfig) -> None:
         self._config = config
@@ -25,6 +25,11 @@ class LLMClient:
 
     async def probe(self) -> None:
         """Check which LLM backend is available."""
+        if self._config.openai_api_key:
+            self._backend = "openai"
+            logger.info("LLM Backend: OpenAI (%s)", self._config.openai_model)
+            return
+
         if await self._probe_ollama():
             self._backend = "ollama"
             logger.info("LLM Backend: Ollama (%s)", self._config.model)
@@ -37,17 +42,45 @@ class LLMClient:
 
         raise LLMError(
             "No LLM backend available.\n"
-            "  Option 1: Install and start Ollama (https://ollama.com), "
+            "  Option 1: Set OPENAI_API_KEY in .env\n"
+            "  Option 2: Install and start Ollama (https://ollama.com), "
             f"then run: ollama pull {self._config.model}\n"
-            "  Option 2: Pass --gemini-key YOUR_API_KEY for Google Gemini fallback."
+            "  Option 3: Set GOOGLE_API_KEY in .env for Gemini fallback."
         )
 
     async def generate(self, system_prompt: str, user_prompt: str) -> str:
-        if self._backend == "ollama":
+        if self._backend == "openai":
+            return await self._generate_openai(system_prompt, user_prompt)
+        elif self._backend == "ollama":
             return await self._generate_ollama(system_prompt, user_prompt)
         elif self._backend == "gemini":
             return await self._generate_gemini(system_prompt, user_prompt)
         raise LLMError("No LLM backend configured. Call probe() first.")
+
+    # ── OpenAI ────────────────────────────────────────────────────────
+
+    async def _generate_openai(self, system_prompt: str, user_prompt: str) -> str:
+        import httpx
+
+        def _call() -> str:
+            payload = {
+                "model": self._config.openai_model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "temperature": 0.3,
+            }
+            response = httpx.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {self._config.openai_api_key}"},
+                json=payload,
+                timeout=60.0,
+            )
+            response.raise_for_status()
+            return response.json()["choices"][0]["message"]["content"]
+
+        return await asyncio.to_thread(_call)
 
     # ── Ollama ────────────────────────────────────────────────────────
 

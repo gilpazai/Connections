@@ -11,6 +11,7 @@ import io
 import logging
 from datetime import date, datetime
 
+from src.data.linkedin import is_advisory_role
 from src.models.contact import WorkHistoryEntry
 from src.models.lead import Lead
 
@@ -119,6 +120,7 @@ def parse_dealigence_csv(
                 start_date=started,
                 end_date=None,
                 tenure_years=tenure,
+                is_advisory=is_advisory_role(title),
             ))
 
         # Previous position work history
@@ -128,11 +130,13 @@ def parse_dealigence_csv(
         prv_seniority = _seniority_from_flags(
             row.get(COL_PRV_VP, ""), row.get(COL_PRV_MID, ""), prv_title,
         )
-        if prv_company:
-            # Estimate start date from current position start + previous tenure
+        # Only add previous position if we know its end date (= current position's start).
+        # If started is None we can't determine when the previous job ended, so omitting
+        # it prevents the entry from being mistakenly treated as "current employment".
+        if prv_company and started is not None:
             prv_end = started
             prv_start = None
-            if prv_end and prv_tenure > 0:
+            if prv_tenure > 0:
                 months_back = int(prv_tenure * 12)
                 year = prv_end.year
                 month = prv_end.month - months_back
@@ -150,6 +154,7 @@ def parse_dealigence_csv(
                 start_date=prv_start,
                 end_date=prv_end,
                 tenure_years=prv_tenure,
+                is_advisory=is_advisory_role(prv_title),
             ))
 
     logger.info(

@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 
 from src.data.dealigence import normalize_company_name
-from src.engine.index import CompanyTimeIndex, month_diff
+from src.engine.index import CompanyTimeIndex, fill_end_dates, is_stealth_company, month_diff
 from src.models.contact import WorkHistoryEntry
 from src.models.match import Match
 
@@ -55,8 +55,10 @@ class SharedWorkplaceRule:
         matches: list[Match] = []
 
         for lead_id, lead_entries in lead_histories.items():
-            for lead_entry in lead_entries:
+            for lead_entry, lead_effective_end in fill_end_dates(lead_entries):
                 if not lead_entry.start_date and not lead_entry.is_advisory:
+                    continue
+                if is_stealth_company(lead_entry.employer_name):
                     continue
 
                 # Look up company in the index
@@ -70,7 +72,7 @@ class SharedWorkplaceRule:
                 overlaps = index.find_overlaps(
                     company_key=company_key,
                     start=lead_entry.start_date or date(2000, 1, 1),
-                    end=lead_entry.end_date,
+                    end=lead_effective_end,
                     target_type="contact",
                     query_is_advisory=lead_entry.is_advisory,
                 )

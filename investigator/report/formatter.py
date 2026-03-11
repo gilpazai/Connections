@@ -29,7 +29,7 @@ class ReportFormatter:
             f"# Investigation Report: {config.name}\n"
             f"{company_line}\n"
             f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-            f"**Model:** {config.model}\n"
+            f"**Model:** {config.openai_model if config.openai_api_key else config.model}\n"
             f"\n---\n"
         )
 

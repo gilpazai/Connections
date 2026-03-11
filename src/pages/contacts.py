@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+
 import streamlit as st
 
 from src.data.notion_store import NotionStore
@@ -17,13 +18,16 @@ def _get_store() -> NotionStore:
     return st.session_state.notion_store
 
 
+store = _get_store()
+
+# ── Page header ──────────────────────────────────────────────────────────────
+
 st.title("Contacts")
 st.caption("Manage your core network of close contacts.")
 
-store = _get_store()
+# ── Add contact form ─────────────────────────────────────────────────────────
 
-# Add contact form
-with st.expander("Add New Contact", expanded=False):
+with st.expander("Add New Contact", expanded=False, icon=":material/person_add:"):
     with st.form("add_contact"):
         col1, col2 = st.columns(2)
         with col1:
@@ -42,16 +46,45 @@ with st.expander("Add New Contact", expanded=False):
         submitted = st.form_submit_button("Add Contact", type="primary")
         if submitted and name:
             try:
+                used_url = linkedin_url.strip()
+                if not used_url:
+                    with st.spinner(f"Searching LinkedIn for {name}..."):
+                        from src.data.linkedin_finder import find_linkedin_url
+                        used_url = find_linkedin_url(name, company or None) or ""
+
                 contact = Contact(
                     name=name,
-                    linkedin_url=linkedin_url,
+                    linkedin_url=used_url,
                     company_current=company,
                     title_current=title,
                     relationship_strength=relationship,
                     tags=[t.strip() for t in tags_input.split(",") if t.strip()],
                 )
-                store.create_contact(contact)
-                st.success(f"Added contact: {name}.")
+                new_page_id = store.create_contact(contact)
+
+                if used_url:
+                    with st.spinner(f"Enriching {name} from LinkedIn..."):
+                        try:
+                            from src.pages._enrichment_ui import enrich_from_linkedin_url
+                            count, _, new_matches = enrich_from_linkedin_url(
+                                store, name, "Contact", used_url,
+                                notion_page_id=new_page_id,
+                            )
+                            msg = f"Added and enriched **{name}**: {count} positions stored."
+                            if new_matches:
+                                msg += f" {new_matches} new match(es) found."
+                            st.session_state["add_contact_result"] = ("success", msg)
+                        except Exception as e:
+                            st.session_state["add_contact_result"] = (
+                                "warning",
+                                f"Added **{name}** but enrichment failed: {e}",
+                            )
+                else:
+                    st.session_state["add_contact_result"] = (
+                        "info",
+                        f"Added **{name}** — no LinkedIn profile found. Add a URL to enrich.",
+                    )
+
                 st.session_state["post_add_research_name"] = name
                 st.session_state["post_add_research_company"] = company
                 st.rerun()
@@ -61,6 +94,11 @@ with st.expander("Add New Contact", expanded=False):
                 st.error(f"Failed to add contact: {e}")
         elif submitted:
             st.warning("Name is required.")
+
+# Result from previous add
+if "add_contact_result" in st.session_state:
+    level, msg = st.session_state.pop("add_contact_result")
+    getattr(st, level)(msg)
 
 # Post-add research prompt
 if "post_add_research_name" in st.session_state:
@@ -78,16 +116,17 @@ if "post_add_research_name" in st.session_state:
         if st.button("Skip", key="post_add_research_no"):
             st.rerun()
 
-st.divider()
+# ── Filters ──────────────────────────────────────────────────────────────────
 
-# Filters
-col_f1, col_f2 = st.columns(2)
-with col_f1:
-    status_filter = st.selectbox(
-        "Filter by Status", ["All", "Active", "Inactive"], index=0
-    )
+status_filter = st.pills(
+    "Status",
+    ["All", "Active", "Inactive"],
+    default="All",
+    key="contacts_status_filter",
+)
 
-# Contacts table
+# ── Load contacts ────────────────────────────────────────────────────────────
+
 try:
     status = None if status_filter == "All" else status_filter
     contacts = store.get_all_contacts(status=status)
@@ -95,83 +134,106 @@ except Exception as e:
     st.error(f"Could not load contacts: {e}")
     contacts = []
 
-if contacts:
-    import pandas as pd
-    from src.pages._table_helpers import lookup_work_history, position_cells
-    from src.pages._enrichment_ui import enrich_from_linkedin_url
+if not contacts:
+    st.info("No contacts found. Add your first contact above.")
+    st.stop()
 
-    # Load all work histories for contacts in one query
-    try:
-        grouped_wh = store.get_work_histories_grouped(person_type="Contact")
-    except Exception:
-        grouped_wh = {}
+import pandas as pd
+from src.pages._table_helpers import lookup_work_history, position_cells
+from src.pages._enrichment_ui import enrich_from_linkedin_url
 
-    # ── Per-row buttons ──────────────────────────────────────────────────────
-    hdr0, hdr1, hdr2, hdr3, hdr4, hdr5 = st.columns([1, 1, 3, 3, 2, 2])
-    hdr1.markdown("**Actions**")
-    hdr2.markdown("**Name**")
-    hdr3.markdown("**Company**")
-    hdr4.markdown("**Strength**")
-    hdr5.markdown("**Status**")
+try:
+    grouped_wh = store.get_work_histories_grouped(person_type="Contact")
+except Exception:
+    grouped_wh = {}
+
+# ── Delete confirmation dialog ───────────────────────────────────────────────
+
+@st.dialog("Delete contact")
+def _confirm_delete(page_id: str, person_name: str):
+    st.write(f"Delete **{person_name}** and all associated data?")
+    st.caption("Removes the contact, their work history, and any matches.")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Delete", type="primary", use_container_width=True, key="dlg_del_confirm"):
+            store.delete_contact(page_id, person_name=person_name)
+            st.rerun()
+    with col2:
+        if st.button("Cancel", use_container_width=True, key="dlg_del_cancel"):
+            st.rerun()
+
+# ── Contacts table ───────────────────────────────────────────────────────────
+
+st.caption(f"{len(contacts)} contacts shown.")
+
+tab_list, tab_detail = st.tabs(["List View", "Detail Table"])
+
+with tab_list:
+    # Header row
+    hdr_name, hdr_company, hdr_strength, hdr_status, hdr_actions = st.columns([3, 3, 2, 2, 1])
+    hdr_name.markdown("**Name**")
+    hdr_company.markdown("**Company**")
+    hdr_strength.markdown("**Strength**")
+    hdr_status.markdown("**Status**")
+    hdr_actions.markdown("**...**")
 
     for c in contacts:
-        col_enrich, col_research, col_name, col_company, col_strength, col_status = st.columns([1, 1, 3, 3, 2, 2])
-        with col_enrich:
-            label = "Enrich" if c.last_enriched is None else "Re-enrich"
-            if st.button(label, key=f"enrich_c_{c.notion_page_id or c.name}"):
-                if not c.linkedin_url:
-                    st.warning(f"No LinkedIn URL for {c.name} — add one first.")
-                else:
-                    with st.spinner(f"Enriching {c.name}..."):
-                        try:
-                            count, _, new_matches = enrich_from_linkedin_url(
-                                store, c.name, "Contact", c.linkedin_url
-                            )
-                            msg = f"Enriched **{c.name}**: {count} positions stored."
-                            if new_matches:
-                                msg += f" {new_matches} new match(es) found."
-                            st.success(msg)
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Enrichment failed: {e}")
-        with col_research:
-            if st.button("Research", key=f"research_c_{c.notion_page_id or c.name}"):
-                st.session_state["research_person_name"] = c.name
-                st.session_state["research_person_company"] = c.company_current or ""
-                st.session_state["research_person_type"] = "Contact"
-                st.switch_page("src/pages/research.py")
+        row_key = c.notion_page_id or c.name
+        col_name, col_company, col_strength, col_status, col_actions = st.columns([3, 3, 2, 2, 1])
         col_name.write(c.name)
         col_company.write(c.company_current or "")
         col_strength.write(c.relationship_strength or "")
         col_status.write(c.status or "")
+        with col_actions:
+            with st.popover("...", use_container_width=True):
+                enrich_label = "Re-enrich" if c.last_enriched else "Enrich"
+                if st.button(enrich_label, key=f"enrich_c_{row_key}", use_container_width=True):
+                    if not c.linkedin_url:
+                        st.warning(f"No LinkedIn URL for {c.name}.")
+                    else:
+                        with st.spinner(f"Enriching {c.name}..."):
+                            try:
+                                count, _, new_matches = enrich_from_linkedin_url(
+                                    store, c.name, "Contact", c.linkedin_url,
+                                    notion_page_id=c.notion_page_id,
+                                )
+                                msg = f"Enriched **{c.name}**: {count} positions stored."
+                                if new_matches:
+                                    msg += f" {new_matches} new match(es) found."
+                                st.success(msg)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Enrichment failed: {e}")
+                if st.button("Research", key=f"research_c_{row_key}", use_container_width=True):
+                    st.session_state["research_person_name"] = c.name
+                    st.session_state["research_person_company"] = c.company_current or ""
+                    st.session_state["research_person_type"] = "Contact"
+                    st.switch_page("src/pages/research.py")
+                st.divider()
+                if c.notion_page_id:
+                    if st.button("Delete", key=f"del_c_{row_key}", use_container_width=True):
+                        _confirm_delete(c.notion_page_id, c.name)
 
-    st.divider()
+with tab_detail:
+    rows = []
+    for c in contacts:
+        entries = lookup_work_history(c.dealigence_person_id, c.name, grouped_wh)
+        row = {
+            "Name": c.name,
+            "Company": c.company_current,
+            "Title": c.title_current,
+            "Strength": c.relationship_strength,
+            "Tags": ", ".join(c.tags),
+            "Status": c.status,
+            "LinkedIn": c.linkedin_url,
+        }
+        row.update(position_cells(entries, enriched=c.last_enriched is not None))
+        rows.append(row)
 
-    # ── Full detail table ────────────────────────────────────────────────────
-    with st.expander("Full detail table", expanded=False):
-        rows = []
-        for c in contacts:
-            entries = lookup_work_history(c.dealigence_person_id, c.name, grouped_wh)
-            row = {
-                "Name": c.name,
-                "Company": c.company_current,
-                "Title": c.title_current,
-                "Strength": c.relationship_strength,
-                "Tags": ", ".join(c.tags),
-                "Status": c.status,
-                "LinkedIn": c.linkedin_url,
-            }
-            row.update(position_cells(entries, enriched=c.last_enriched is not None))
-            rows.append(row)
-
-        df = pd.DataFrame(rows)
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={"LinkedIn": st.column_config.LinkColumn("LinkedIn")},
-        )
-    st.caption(f"{len(contacts)} contacts shown.")
-
-else:
-    st.info("No contacts found. Add your first contact above.")
+    df = pd.DataFrame(rows)
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={"LinkedIn": st.column_config.LinkColumn("LinkedIn")},
+    )

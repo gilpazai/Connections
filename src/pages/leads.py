@@ -19,9 +19,10 @@ def _get_store() -> NotionStore:
     return st.session_state.notion_store
 
 
+# ── Dialogs ──────────────────────────────────────────────────────────────────
+
 @st.dialog("Run AI Research on imported leads?")
 def _batch_research_dialog(leads_info: list[dict]) -> None:
-    """Confirmation dialog to research all newly imported leads."""
     st.write(
         f"**{len(leads_info)}** leads were just imported. "
         "Run AI research on each one to build their profiles and extract work history?"
@@ -49,185 +50,258 @@ def _batch_research_dialog(leads_info: list[dict]) -> None:
             st.rerun()
 
 
+@st.dialog("Archive Batch")
+def _archive_batch_dialog() -> None:
+    store = _get_store()
+    st.write("Archive all leads in a batch. Archived leads are hidden from the default view.")
+    archive_batch = st.text_input("Batch to archive", placeholder="e.g. 2026-02")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Archive", type="primary", use_container_width=True, key="dlg_archive_confirm"):
+            if archive_batch:
+                try:
+                    count = store.archive_batch(archive_batch)
+                    if count:
+                        st.success(f"Archived **{count}** leads from batch '{archive_batch}'.")
+                        st.rerun()
+                    else:
+                        st.info("No leads found in that batch (or already archived).")
+                except Exception as e:
+                    st.error(f"Failed to archive batch: {e}")
+    with col2:
+        if st.button("Cancel", use_container_width=True, key="dlg_archive_cancel"):
+            st.rerun()
+
+
+@st.dialog("Delete lead")
+def _confirm_delete_lead(page_id: str, person_name: str) -> None:
+    store = _get_store()
+    st.write(f"Delete **{person_name}** and all associated data?")
+    st.caption("Removes the lead, their work history, and any matches.")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Delete", type="primary", use_container_width=True, key="dlg_del_l_confirm"):
+            store.delete_lead(page_id, person_name=person_name)
+            st.rerun()
+    with col2:
+        if st.button("Cancel", use_container_width=True, key="dlg_del_l_cancel"):
+            st.rerun()
+
+
+# ── Page header ──────────────────────────────────────────────────────────────
+
 st.title("Leads")
 st.caption("Manage monthly target leads for warm introductions.")
 
 store = _get_store()
 
-# CSV file import (Dealigence export format)
-with st.expander("Import from Dealigence CSV", expanded=False):
-    st.markdown(
-        "Upload a CSV exported from Dealigence (e.g. Stealth Co-Founders Report). "
-        "This will create leads **and** store their work history from the CSV data."
-    )
-    with st.form("import_csv"):
-        uploaded_file = st.file_uploader(
-            "Dealigence CSV file",
-            type=["csv"],
-            help="CSV with columns: Person Name, Person Linkedin, Company Name, Employee Title, etc.",
+# ── Import section (consolidated) ────────────────────────────────────────────
+
+with st.expander("Import Leads", expanded=False, icon=":material/upload:"):
+    import_tab_csv, import_tab_paste, import_tab_single = st.tabs([
+        "Dealigence CSV", "Paste List", "Add Single"
+    ])
+
+    # --- Tab 1: CSV import ---
+    with import_tab_csv:
+        st.caption(
+            "Upload a CSV exported from Dealigence (e.g. Stealth Co-Founders Report). "
+            "Creates leads **and** stores their work history."
         )
-        col_a, col_b = st.columns(2)
-        with col_a:
-            csv_batch = st.text_input(
-                "Batch Label",
-                value=date.today().strftime("%Y-%m"),
+        with st.form("import_csv"):
+            uploaded_file = st.file_uploader(
+                "Dealigence CSV file",
+                type=["csv"],
+                help="CSV with columns: Person Name, Person Linkedin, Company Name, Employee Title, etc.",
             )
-        with col_b:
-            csv_priority = st.selectbox(
-                "Default Priority",
-                ["High", "Medium", "Low"],
-                index=1,
-                key="csv_priority",
-            )
-        csv_submitted = st.form_submit_button("Import CSV", type="primary")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                csv_batch = st.text_input("Batch Label", value=date.today().strftime("%Y-%m"))
+            with col_b:
+                csv_priority = st.selectbox("Default Priority", ["High", "Medium", "Low"], index=1, key="csv_priority")
+            csv_submitted = st.form_submit_button("Import CSV", type="primary")
 
-    if csv_submitted and uploaded_file is not None:
-        from src.data.csv_import import parse_dealigence_csv
+        if csv_submitted and uploaded_file is not None:
+            from src.data.csv_import import parse_dealigence_csv
 
-        try:
-            csv_content = uploaded_file.getvalue().decode("utf-8")
-            leads_parsed, work_entries = parse_dealigence_csv(
-                csv_content, batch=csv_batch, default_priority=csv_priority,
-            )
+            try:
+                csv_content = uploaded_file.getvalue().decode("utf-8")
+                leads_parsed, work_entries = parse_dealigence_csv(
+                    csv_content, batch=csv_batch, default_priority=csv_priority,
+                )
 
-            created_leads = 0
-            skipped_dupes = 0
-            created_history = 0
-            progress = st.progress(0, text="Importing leads...")
-            imported_names = []
+                created_leads = 0
+                skipped_dupes = 0
+                created_history = 0
+                progress = st.progress(0, text="Importing leads...")
+                imported_names = []
 
-            for i, lead in enumerate(leads_parsed):
-                try:
-                    store.create_lead(lead)
-                    created_leads += 1
-                    imported_names.append({"name": lead.name, "company": lead.company_current or ""})
-                except ValueError:
-                    skipped_dupes += 1
-                except Exception as e:
-                    st.warning(f"Failed to import '{lead.name}': {e}")
-                progress.progress((i + 1) / (len(leads_parsed) + 1), text=f"Importing lead {i+1}/{len(leads_parsed)}...")
+                for i, lead in enumerate(leads_parsed):
+                    try:
+                        store.create_lead(lead)
+                        created_leads += 1
+                        imported_names.append({"name": lead.name, "company": lead.company_current or ""})
+                    except ValueError:
+                        skipped_dupes += 1
+                    except Exception as e:
+                        st.warning(f"Failed to import '{lead.name}': {e}")
+                    progress.progress((i + 1) / (len(leads_parsed) + 1), text=f"Importing lead {i+1}/{len(leads_parsed)}...")
 
-            # Store work history entries in batches
-            if work_entries:
-                created_history = store.store_work_history(work_entries)
+                if work_entries:
+                    # Clean up existing work history to prevent duplicates/orphans
+                    cleaned_names = set()
+                    for entry in work_entries:
+                        if entry.person_name not in cleaned_names:
+                            store.delete_work_history_by_name(entry.person_name)
+                            cleaned_names.add(entry.person_name)
+                    created_history = store.store_work_history(work_entries)
 
-            # Auto-match imported leads against existing contacts
-            created_matches = 0
-            if work_entries and created_leads > 0:
-                from src.engine.matcher import run_matching, store_new_matches, _group_histories_by_name
+                created_matches = 0
+                if work_entries and created_leads > 0:
+                    from src.engine.matcher import run_matching, store_new_matches, _group_histories_by_name
 
-                progress.progress(0.95, text="Running matching...")
-                contact_entries = store.get_all_work_history(person_type="Contact")
-                if contact_entries:
-                    contact_histories = _group_histories_by_name(contact_entries)
-                    lead_histories = _group_histories_by_name(work_entries)
-                    matches = run_matching(contact_histories, lead_histories)
-                    created_matches, _ = store_new_matches(matches, store)
+                    progress.progress(0.95, text="Running matching...")
+                    contact_entries = store.get_all_work_history(person_type="Contact")
+                    if contact_entries:
+                        contact_histories = _group_histories_by_name(contact_entries)
+                        lead_histories = _group_histories_by_name(work_entries)
+                        matches = run_matching(contact_histories, lead_histories)
+                        created_matches, _ = store_new_matches(matches, store)
 
-            progress.progress(1.0, text="Import complete!")
-            msg = f"Imported **{created_leads}** leads and **{created_history}** work history entries into batch '{csv_batch}'."
-            if created_matches:
-                msg += f" Discovered **{created_matches}** new matches."
-            if skipped_dupes:
-                msg += f" Skipped **{skipped_dupes}** duplicates."
-            st.success(msg)
-
-            if imported_names:
-                st.session_state["pending_batch_research"] = imported_names
-            st.rerun()
-        except Exception as e:
-            st.error(f"CSV import failed: {e}")
-            logger.exception("CSV import error")
-
-# Batch import (manual paste)
-with st.expander("Import Lead Batch (paste)", expanded=False):
-    st.markdown("Paste one lead per line: `Name, Company, LinkedIn URL` (company and URL optional)")
-    with st.form("import_leads"):
-        batch_label = st.text_input(
-            "Batch Label",
-            value=date.today().strftime("%Y-%m"),
-            help="Month identifier for this batch",
-        )
-        priority = st.selectbox("Default Priority", ["High", "Medium", "Low"], index=1)
-        raw_input = st.text_area(
-            "Leads",
-            height=200,
-            placeholder="Jane Doe, Acme Corp, https://linkedin.com/in/janedoe\nJohn Smith, Beta Inc",
-        )
-        submitted = st.form_submit_button("Import Leads", type="primary")
-        if submitted and raw_input.strip():
-            lines = [l.strip() for l in raw_input.strip().split("\n") if l.strip()]
-            created = 0
-            skipped = 0
-            imported_names = []
-            for line in lines:
-                parts = [p.strip() for p in line.split(",")]
-                name = parts[0] if len(parts) > 0 else ""
-                company = parts[1] if len(parts) > 1 else ""
-                linkedin = parts[2] if len(parts) > 2 else ""
-                if not name:
-                    continue
-                try:
-                    lead = Lead(
-                        name=name,
-                        company_current=company,
-                        linkedin_url=linkedin,
-                        priority=priority,
-                        batch=batch_label,
-                    )
-                    store.create_lead(lead)
-                    created += 1
-                    imported_names.append({"name": name, "company": company})
-                except ValueError:
-                    skipped += 1
-                except Exception as e:
-                    st.warning(f"Failed to import '{name}': {e}")
-            if created or skipped:
-                msg = f"Imported {created} leads into batch '{batch_label}'."
-                if skipped:
-                    msg += f" Skipped {skipped} duplicates."
+                progress.progress(1.0, text="Import complete!")
+                msg = f"Imported **{created_leads}** leads and **{created_history}** work history entries into batch '{csv_batch}'."
+                if created_matches:
+                    msg += f" Discovered **{created_matches}** new matches."
+                if skipped_dupes:
+                    msg += f" Skipped **{skipped_dupes}** duplicates."
                 st.success(msg)
+
                 if imported_names:
                     st.session_state["pending_batch_research"] = imported_names
                 st.rerun()
-
-# Add single lead
-with st.expander("Add Single Lead", expanded=False):
-    with st.form("add_lead"):
-        col1, col2 = st.columns(2)
-        with col1:
-            name = st.text_input("Full Name*")
-            linkedin_url = st.text_input("LinkedIn URL")
-            company = st.text_input("Current Company")
-        with col2:
-            title = st.text_input("Current Title")
-            lead_priority = st.selectbox("Priority", ["High", "Medium", "Low"], index=1)
-            batch = st.text_input("Batch", value=date.today().strftime("%Y-%m"))
-
-        submitted = st.form_submit_button("Add Lead", type="primary")
-        if submitted and name:
-            try:
-                lead = Lead(
-                    name=name,
-                    linkedin_url=linkedin_url,
-                    company_current=company,
-                    title_current=title,
-                    priority=lead_priority,
-                    batch=batch,
-                )
-                store.create_lead(lead)
-                st.success(f"Added lead: {name}.")
-                st.session_state["post_add_research_name"] = name
-                st.session_state["post_add_research_company"] = company
-                st.rerun()
-            except ValueError as e:
-                st.warning(str(e))
             except Exception as e:
-                st.error(f"Failed to add lead: {e}")
-        elif submitted:
-            st.warning("Name is required.")
+                st.error(f"CSV import failed: {e}")
+                logger.exception("CSV import error")
 
-# Post-add research prompt (single lead)
+    # --- Tab 2: Paste import ---
+    with import_tab_paste:
+        st.caption("Paste one lead per line: `Name, Company, LinkedIn URL` (company and URL optional)")
+        with st.form("import_leads"):
+            batch_label = st.text_input("Batch Label", value=date.today().strftime("%Y-%m"), help="Month identifier for this batch")
+            priority = st.selectbox("Default Priority", ["High", "Medium", "Low"], index=1)
+            raw_input = st.text_area(
+                "Leads",
+                height=200,
+                placeholder="Jane Doe, Acme Corp, https://linkedin.com/in/janedoe\nJohn Smith, Beta Inc",
+            )
+            submitted = st.form_submit_button("Import Leads", type="primary")
+            if submitted and raw_input.strip():
+                lines = [l.strip() for l in raw_input.strip().split("\n") if l.strip()]
+                created = 0
+                skipped = 0
+                imported_names = []
+                for line in lines:
+                    parts = [p.strip() for p in line.split(",")]
+                    name = parts[0] if len(parts) > 0 else ""
+                    company = parts[1] if len(parts) > 1 else ""
+                    linkedin = parts[2] if len(parts) > 2 else ""
+                    if not name:
+                        continue
+                    try:
+                        lead = Lead(
+                            name=name,
+                            company_current=company,
+                            linkedin_url=linkedin,
+                            priority=priority,
+                            batch=batch_label,
+                        )
+                        store.create_lead(lead)
+                        created += 1
+                        imported_names.append({"name": name, "company": company})
+                    except ValueError:
+                        skipped += 1
+                    except Exception as e:
+                        st.warning(f"Failed to import '{name}': {e}")
+                if created or skipped:
+                    msg = f"Imported {created} leads into batch '{batch_label}'."
+                    if skipped:
+                        msg += f" Skipped {skipped} duplicates."
+                    st.success(msg)
+                    if imported_names:
+                        st.session_state["pending_batch_research"] = imported_names
+                    st.rerun()
+
+    # --- Tab 3: Add single lead ---
+    with import_tab_single:
+        with st.form("add_lead"):
+            col1, col2 = st.columns(2)
+            with col1:
+                name = st.text_input("Full Name*")
+                linkedin_url = st.text_input("LinkedIn URL")
+                company = st.text_input("Current Company")
+            with col2:
+                title = st.text_input("Current Title")
+                lead_priority = st.selectbox("Priority", ["High", "Medium", "Low"], index=1)
+                batch = st.text_input("Batch", value=date.today().strftime("%Y-%m"))
+
+            submitted = st.form_submit_button("Add Lead", type="primary")
+            if submitted and name:
+                try:
+                    used_url = linkedin_url.strip()
+                    if not used_url:
+                        with st.spinner(f"Searching LinkedIn for {name}..."):
+                            from src.data.linkedin_finder import find_linkedin_url
+                            used_url = find_linkedin_url(name, company or None) or ""
+
+                    lead = Lead(
+                        name=name,
+                        linkedin_url=used_url,
+                        company_current=company,
+                        title_current=title,
+                        priority=lead_priority,
+                        batch=batch,
+                    )
+                    new_page_id = store.create_lead(lead)
+
+                    if used_url:
+                        with st.spinner(f"Enriching {name} from LinkedIn..."):
+                            try:
+                                from src.pages._enrichment_ui import enrich_from_linkedin_url
+                                count, _, new_matches = enrich_from_linkedin_url(
+                                    store, name, "Lead", used_url,
+                                    notion_page_id=new_page_id,
+                                )
+                                msg = f"Added and enriched **{name}**: {count} positions stored."
+                                if new_matches:
+                                    msg += f" {new_matches} new match(es) found."
+                                st.session_state["add_lead_result"] = ("success", msg)
+                            except Exception as e:
+                                st.session_state["add_lead_result"] = (
+                                    "warning",
+                                    f"Added **{name}** but enrichment failed: {e}",
+                                )
+                    else:
+                        st.session_state["add_lead_result"] = (
+                            "info",
+                            f"Added **{name}** — no LinkedIn profile found. Add a URL to enrich.",
+                        )
+
+                    st.session_state["post_add_research_name"] = name
+                    st.session_state["post_add_research_company"] = company
+                    st.rerun()
+                except ValueError as e:
+                    st.warning(str(e))
+                except Exception as e:
+                    st.error(f"Failed to add lead: {e}")
+            elif submitted:
+                st.warning("Name is required.")
+
+# Result from previous add
+if "add_lead_result" in st.session_state:
+    level, msg = st.session_state.pop("add_lead_result")
+    getattr(st, level)(msg)
+
+# Post-add research prompt
 if "post_add_research_name" in st.session_state:
     _name = st.session_state.pop("post_add_research_name")
     _company = st.session_state.pop("post_add_research_company", "")
@@ -247,142 +321,131 @@ if "post_add_research_name" in st.session_state:
 if "pending_batch_research" in st.session_state:
     _batch_research_dialog(st.session_state.pop("pending_batch_research"))
 
-st.divider()
+# ── Filters ──────────────────────────────────────────────────────────────────
 
-# Batch archive
-with st.expander("Close Batch", expanded=False):
-    st.markdown("Archive all leads in a batch. Archived leads are hidden from the default view.")
-    with st.form("close_batch"):
-        archive_batch = st.text_input("Batch to archive", placeholder="e.g. 2026-02")
-        if st.form_submit_button("Archive Batch", type="primary"):
-            if archive_batch:
-                try:
-                    count = store.archive_batch(archive_batch)
-                    if count:
-                        st.success(f"Archived **{count}** leads from batch '{archive_batch}'.")
-                        st.rerun()
-                    else:
-                        st.info("No leads found in that batch (or already archived).")
-                except Exception as e:
-                    st.error(f"Failed to archive batch: {e}")
-
-st.divider()
-
-# Filters
-col_f1, col_f2, col_f3 = st.columns(3)
+col_f1, col_f2 = st.columns([1, 3])
 with col_f1:
-    batch_filter = st.text_input("Filter by Batch", placeholder="e.g. 2026-03")
+    batch_filter = st.text_input("Batch", placeholder="e.g. 2026-03")
 with col_f2:
-    status_filter = st.selectbox(
-        "Filter by Status",
-        ["All", "New", "Enriched", "Matched", "Contacted", "Converted", "Archived"],
-        index=0,
-    )
-with col_f3:
-    show_archived = st.checkbox("Show Archived", value=False)
+    status_options = ["All", "New", "Enriched", "Matched", "Contacted", "Converted", "Archived"]
+    status_filter = st.pills("Status", status_options, default="All", key="leads_status_filter")
 
-# Leads table
+# Header actions (Archive Batch)
+if st.button("Archive Batch", help="Archive all leads in a batch to hide them from the default view"):
+    _archive_batch_dialog()
+
+# ── Load leads ───────────────────────────────────────────────────────────────
+
 try:
-    if show_archived or status_filter == "Archived":
-        leads = store.get_all_leads(
-            batch=batch_filter or None,
-            status=None if status_filter == "All" else status_filter,
-        )
+    if status_filter == "Archived":
+        leads = store.get_all_leads(batch=batch_filter or None, status="Archived")
+    elif status_filter and status_filter != "All":
+        leads = store.get_active_leads(batch=batch_filter or None)
+        leads = [l for l in leads if l.status == status_filter]
     else:
         leads = store.get_active_leads(batch=batch_filter or None)
-        if status_filter != "All":
-            leads = [l for l in leads if l.status == status_filter]
 except Exception as e:
     st.error(f"Could not load leads: {e}")
     leads = []
 
-if leads:
-    import pandas as pd
-    from src.pages._table_helpers import lookup_work_history, position_cells
-    from src.pages._enrichment_ui import enrich_from_linkedin_url
+if not leads:
+    st.info("No leads found. Import a batch or add leads above.")
+    st.stop()
 
-    # Load all work histories for leads in one query
-    try:
-        grouped_wh = store.get_work_histories_grouped(person_type="Lead")
-    except Exception:
-        grouped_wh = {}
+import pandas as pd
+from src.pages._table_helpers import lookup_work_history, position_cells
+from src.pages._enrichment_ui import enrich_from_linkedin_url
 
-    # ── Per-row buttons ──────────────────────────────────────────────────────
-    hdr0, hdr1, hdr2, hdr3, hdr4, hdr5, hdr6 = st.columns([1, 1, 3, 3, 2, 2, 2])
-    hdr1.markdown("**Actions**")
-    hdr2.markdown("**Name**")
-    hdr3.markdown("**Company**")
-    hdr4.markdown("**Priority**")
-    hdr5.markdown("**Batch**")
-    hdr6.markdown("**Status**")
+try:
+    grouped_wh = store.get_work_histories_grouped(person_type="Lead")
+except Exception:
+    grouped_wh = {}
+
+# ── Status metrics (above the list for context) ─────────────────────────────
+
+status_counts = {}
+for l in leads:
+    status_counts[l.status] = status_counts.get(l.status, 0) + 1
+metric_cols = st.columns(max(len(status_counts), 1))
+for i, (s, count) in enumerate(sorted(status_counts.items())):
+    with metric_cols[i]:
+        st.metric(s, count)
+
+# ── Leads table ──────────────────────────────────────────────────────────────
+
+st.caption(f"{len(leads)} leads shown.")
+
+tab_list, tab_detail = st.tabs(["List View", "Detail Table"])
+
+with tab_list:
+    # Header row
+    hdr_name, hdr_company, hdr_priority, hdr_batch, hdr_status, hdr_actions = st.columns([3, 2, 1, 1, 1, 1])
+    hdr_name.markdown("**Name**")
+    hdr_company.markdown("**Company**")
+    hdr_priority.markdown("**Priority**")
+    hdr_batch.markdown("**Batch**")
+    hdr_status.markdown("**Status**")
+    hdr_actions.markdown("**...**")
 
     for l in leads:
-        col_enrich, col_research, col_name, col_company, col_priority, col_batch, col_status = st.columns([1, 1, 3, 3, 2, 2, 2])
-        with col_enrich:
-            has_history = len(lookup_work_history(l.dealigence_person_id, l.name, grouped_wh)) > 0
-            label = "Re-enrich" if has_history else "Enrich"
-            if st.button(label, key=f"enrich_l_{l.notion_page_id or l.name}"):
-                if not l.linkedin_url:
-                    st.warning(f"No LinkedIn URL for {l.name} — add one first.")
-                else:
-                    with st.spinner(f"Enriching {l.name}..."):
-                        try:
-                            count, _, new_matches = enrich_from_linkedin_url(
-                                store, l.name, "Lead", l.linkedin_url
-                            )
-                            msg = f"Enriched **{l.name}**: {count} positions stored."
-                            if new_matches:
-                                msg += f" {new_matches} new match(es) found."
-                            st.success(msg)
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Enrichment failed: {e}")
-        with col_research:
-            if st.button("Research", key=f"research_l_{l.notion_page_id or l.name}"):
-                st.session_state["research_person_name"] = l.name
-                st.session_state["research_person_company"] = l.company_current or ""
-                st.session_state["research_person_type"] = "Lead"
-                st.switch_page("src/pages/research.py")
+        row_key = l.notion_page_id or l.name
+        col_name, col_company, col_priority, col_batch, col_status, col_actions = st.columns([3, 2, 1, 1, 1, 1])
         col_name.write(l.name)
         col_company.write(l.company_current or "")
         col_priority.write(l.priority or "")
         col_batch.write(l.batch or "")
         col_status.write(l.status or "")
+        with col_actions:
+            with st.popover("...", use_container_width=True):
+                has_history = len(lookup_work_history(l.dealigence_person_id, l.name, grouped_wh)) > 0
+                enrich_label = "Re-enrich" if has_history else "Enrich"
+                if st.button(enrich_label, key=f"enrich_l_{row_key}", use_container_width=True):
+                    if not l.linkedin_url:
+                        st.warning(f"No LinkedIn URL for {l.name}.")
+                    else:
+                        with st.spinner(f"Enriching {l.name}..."):
+                            try:
+                                count, _, new_matches = enrich_from_linkedin_url(
+                                    store, l.name, "Lead", l.linkedin_url,
+                                    notion_page_id=l.notion_page_id,
+                                )
+                                msg = f"Enriched **{l.name}**: {count} positions stored."
+                                if new_matches:
+                                    msg += f" {new_matches} new match(es) found."
+                                st.success(msg)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Enrichment failed: {e}")
+                if st.button("Research", key=f"research_l_{row_key}", use_container_width=True):
+                    st.session_state["research_person_name"] = l.name
+                    st.session_state["research_person_company"] = l.company_current or ""
+                    st.session_state["research_person_type"] = "Lead"
+                    st.switch_page("src/pages/research.py")
+                st.divider()
+                if l.notion_page_id:
+                    if st.button("Delete", key=f"del_l_{row_key}", use_container_width=True):
+                        _confirm_delete_lead(l.notion_page_id, l.name)
 
-    st.divider()
-
-    # ── Full detail table ────────────────────────────────────────────────────
-    with st.expander("Full detail table", expanded=False):
-        rows = []
-        for l in leads:
-            entries = lookup_work_history(l.dealigence_person_id, l.name, grouped_wh)
-            row = {
-                "Name": l.name,
-                "Company": l.company_current,
-                "Title": l.title_current,
-                "Priority": l.priority,
-                "Batch": l.batch,
-                "Status": l.status,
-                "LinkedIn": l.linkedin_url,
-            }
-            row.update(position_cells(entries, enriched=len(entries) > 0))
-            rows.append(row)
-
-        df = pd.DataFrame(rows)
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={"LinkedIn": st.column_config.LinkColumn("LinkedIn")},
-        )
-
-    # Status summary
-    status_counts = {}
+with tab_detail:
+    rows = []
     for l in leads:
-        status_counts[l.status] = status_counts.get(l.status, 0) + 1
-    cols = st.columns(len(status_counts))
-    for i, (s, count) in enumerate(sorted(status_counts.items())):
-        with cols[i]:
-            st.metric(s, count)
-else:
-    st.info("No leads found. Import a batch or add leads above.")
+        entries = lookup_work_history(l.dealigence_person_id, l.name, grouped_wh)
+        row = {
+            "Name": l.name,
+            "Company": l.company_current,
+            "Title": l.title_current,
+            "Priority": l.priority,
+            "Batch": l.batch,
+            "Status": l.status,
+            "LinkedIn": l.linkedin_url,
+        }
+        row.update(position_cells(entries, enriched=len(entries) > 0))
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={"LinkedIn": st.column_config.LinkColumn("LinkedIn")},
+    )
