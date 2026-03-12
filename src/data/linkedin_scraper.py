@@ -186,7 +186,7 @@ def _activity_url(linkedin_url: str, activity_type: str) -> str:
         url = url.split("/recent-activity")[0]
     return url + f"/recent-activity/{activity_type}/"
 
-def scrape_linkedin_activity(linkedin_url: str, activity_type: str = "shares", timeout_secs: int = 30) -> str:
+def scrape_linkedin_activity(linkedin_url: str, activity_type: str = "all", timeout_secs: int = 30) -> str:
     """Open the LinkedIn activity page in Chrome and return body text."""
     url = _activity_url(linkedin_url, activity_type)
     logger.info("Scraping LinkedIn Activity (%s) via Chrome: %s", activity_type, url)
@@ -217,8 +217,8 @@ tell application "Google Chrome"
         execute t javascript "window.scrollBy(0, window.innerHeight)"
         delay 0.5
     end repeat
-    delay 0.3
-    set pageText to execute t javascript "var msg = document.querySelector('.msg-overlay-container'); if(msg) msg.remove(); var aside = document.querySelector('aside'); if(aside) aside.remove(); (function() {{ var main = document.querySelector('main'); return main ? main.innerText : document.body.innerText; }})()"
+    delay 0.5
+    set pageText to execute t javascript "var sel = window.getSelection(); sel.removeAllRanges(); var range = document.createRange(); range.selectNodeContents(document.body); sel.addRange(range); sel.toString();"
     close t
     return pageText
 end tell'''
