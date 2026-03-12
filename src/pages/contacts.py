@@ -166,7 +166,7 @@ def _confirm_delete(page_id: str, person_name: str):
 
 st.caption(f"{len(contacts)} contacts shown.")
 
-tab_list, tab_detail = st.tabs(["List View", "Detail Table"])
+tab_detail, tab_list = st.tabs(["Detail Table", "List View"])
 
 with tab_list:
     # Header row

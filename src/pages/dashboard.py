@@ -9,6 +9,8 @@ from src.data.notion_store import NotionStore
 
 logger = logging.getLogger(__name__)
 
+_ENRICH_BATCH_SIZE = 5
+
 
 def _get_store() -> NotionStore:
     if "notion_store" not in st.session_state:
@@ -65,16 +67,79 @@ with col_r1:
 with col_r2:
     st.metric("Leads with work history", f"{len(enriched_leads)} / {len(leads_list)}")
 
-# Bulk enrich actions
+# ── Active enrichment processor ──────────────────────────────────────────────
+
+if st.session_state.get("_enrich_queue") is not None:
+    if st.session_state.get("_enrich_stop"):
+        done = st.session_state["_enrich_total"] - len(st.session_state["_enrich_queue"])
+        c = st.session_state.get("_enrich_counters", {})
+        st.info(
+            f"Stopped after {done}/{st.session_state['_enrich_total']} people — "
+            f"{c.get('positions', 0)} positions, {c.get('matches', 0)} new matches."
+        )
+        for k in ("_enrich_queue", "_enrich_total", "_enrich_counters", "_enrich_mode", "_enrich_stop"):
+            st.session_state.pop(k, None)
+        st.rerun()
+
+    queue = st.session_state["_enrich_queue"]
+    total = st.session_state["_enrich_total"]
+    done  = total - len(queue)
+    mode  = st.session_state.get("_enrich_mode", "linkedin")
+    label = "Enriching" if mode == "linkedin" else "Researching"
+
+    batch = [queue.pop(0) for _ in range(min(_ENRICH_BATCH_SIZE, len(queue) + 1))]
+    st.session_state["_enrich_queue"] = queue
+
+    batch_start = done + 1
+    batch_end   = done + len(batch)
+    st.progress(
+        done / total,
+        text=f"{label} {batch[0][0].name}… ({batch_start}–{batch_end} of {total})",
+    )
+    st.button(
+        "⏹ Stop after this batch",
+        key="btn_stop_enrich",
+        on_click=lambda: st.session_state.update({"_enrich_stop": True}),
+    )
+
+    counters = st.session_state.setdefault("_enrich_counters", {"positions": 0, "matches": 0})
+    for person, ptype in batch:
+        try:
+            if mode == "linkedin":
+                from src.pages._enrichment_ui import enrich_from_linkedin_url
+                count, _, nm = enrich_from_linkedin_url(
+                    store, person.name, ptype, person.linkedin_url,
+                    notion_page_id=person.notion_page_id,
+                )
+            else:
+                from src.data.investigator_runner import run_research
+                from src.pages._enrichment_ui import do_enrich
+                report_md = run_research(person.name, company=person.company_current, force_refresh=False)
+                count, _, nm = do_enrich(store, person.name, ptype, report_md)
+            counters["positions"] += count
+            counters["matches"]   += nm
+        except Exception as e:
+            logger.warning("Enrichment failed for %s: %s", person.name, e)
+
+    if queue:
+        st.rerun()
+    else:
+        c = counters
+        st.success(
+            f"Done — {total} people: {c['positions']} positions, {c['matches']} new matches."
+        )
+        for k in ("_enrich_queue", "_enrich_total", "_enrich_counters", "_enrich_mode", "_enrich_stop"):
+            st.session_state.pop(k, None)
+        st.rerun()
+
+# ── Bulk enrich actions ───────────────────────────────────────────────────────
+
 if unenriched_contacts or unenriched_leads:
     st.caption("Bulk enrich missing people:")
     col_enrich, col_research, col_nav = st.columns([1, 1, 2])
 
     with col_enrich:
         if st.button("🔗 Enrich from LinkedIn", use_container_width=True, help="Scrape LinkedIn profiles for all unenriched people with URLs"):
-            from src.pages._enrichment_ui import enrich_from_linkedin_url
-            from src.engine.matcher import run_matching, store_new_matches, _group_histories_by_name
-
             to_enrich = []
             if unenriched_contacts:
                 to_enrich.extend([(c, "Contact") for c in contacts_list if c.last_enriched is None and c.linkedin_url])
@@ -82,28 +147,19 @@ if unenriched_contacts or unenriched_leads:
                 to_enrich.extend([(l, "Lead") for l in leads_list if l.last_enriched is None and l.linkedin_url])
 
             if to_enrich:
-                progress = st.progress(0, text="Starting enrichment...")
-                total_count = 0
-                total_matches = 0
-                for i, (person, ptype) in enumerate(to_enrich):
-                    progress.progress((i + 1) / len(to_enrich), text=f"Enriching {person.name}...")
-                    try:
-                        count, _, new_matches = enrich_from_linkedin_url(store, person.name, ptype, person.linkedin_url, notion_page_id=person.notion_page_id)
-                        total_count += count
-                        total_matches += new_matches
-                    except Exception as e:
-                        logger.warning("Enrichment failed for %s: %s", person.name, e)
-                progress.progress(1.0, text="Enrichment complete!")
-                st.success(f"Enriched {len(to_enrich)} people: {total_count} positions, {total_matches} new matches.")
+                st.session_state.update({
+                    "_enrich_queue":    list(to_enrich),
+                    "_enrich_total":    len(to_enrich),
+                    "_enrich_counters": {"positions": 0, "matches": 0},
+                    "_enrich_mode":     "linkedin",
+                })
+                st.session_state.pop("_enrich_stop", None)
+                st.rerun()
             else:
                 st.info("No unenriched people with LinkedIn URLs found.")
 
     with col_research:
         if st.button("🔍 Research & Enrich", use_container_width=True, help="Run AI research on all unenriched people"):
-            from src.data.investigator_runner import run_research
-            from src.pages._enrichment_ui import do_enrich
-            from src.engine.matcher import run_matching, store_new_matches, _group_histories_by_name
-
             to_research = []
             if unenriched_contacts:
                 to_research.extend([(c, "Contact") for c in contacts_list if c.last_enriched is None])
@@ -111,20 +167,14 @@ if unenriched_contacts or unenriched_leads:
                 to_research.extend([(l, "Lead") for l in leads_list if l.last_enriched is None])
 
             if to_research:
-                progress = st.progress(0, text="Starting research...")
-                total_count = 0
-                total_matches = 0
-                for i, (person, ptype) in enumerate(to_research):
-                    progress.progress((i + 1) / len(to_research), text=f"Researching {person.name}... (~30s)")
-                    try:
-                        report_md = run_research(person.name, company=person.company_current, force_refresh=False)
-                        count, _, new_matches = do_enrich(store, person.name, ptype, report_md)
-                        total_count += count
-                        total_matches += new_matches
-                    except Exception as e:
-                        logger.warning("Research failed for %s: %s", person.name, e)
-                progress.progress(1.0, text="Research complete!")
-                st.success(f"Researched {len(to_research)} people: {total_count} positions, {total_matches} new matches.")
+                st.session_state.update({
+                    "_enrich_queue":    list(to_research),
+                    "_enrich_total":    len(to_research),
+                    "_enrich_counters": {"positions": 0, "matches": 0},
+                    "_enrich_mode":     "research",
+                })
+                st.session_state.pop("_enrich_stop", None)
+                st.rerun()
             else:
                 st.info("No unenriched people found.")
 

@@ -211,6 +211,37 @@ with tab_llm:
 
     st.divider()
 
+    # Scraper Method
+    st.subheader("Scraper Method")
+    st.caption("How LinkedIn profile text is extracted from Chrome.")
+
+    _SCRAPER_METHODS = ["clipboard", "dom"]
+    _SCRAPER_LABELS = {
+        "clipboard": "Clipboard (Cmd+A / Cmd+C) — copies all visible text via keyboard shortcut",
+        "dom": "DOM extraction (JavaScript) — extracts main content area via JS",
+    }
+    current_scraper = settings.scraper_method.lower()
+    scraper_idx = _SCRAPER_METHODS.index(current_scraper) if current_scraper in _SCRAPER_METHODS else 0
+
+    new_scraper = st.selectbox(
+        "Method",
+        _SCRAPER_METHODS,
+        index=scraper_idx,
+        format_func=lambda m: _SCRAPER_LABELS[m],
+        key="scraper_method_select",
+    )
+
+    if new_scraper != current_scraper:
+        st.caption(f"**Current:** `{current_scraper}` → `{new_scraper}` *(unsaved)*")
+
+    if st.button("Save Scraper Setting", key="btn_save_scraper"):
+        from dotenv import set_key
+        env_path = os.path.abspath(_ENV_PATH)
+        set_key(env_path, "SCRAPER_METHOD", new_scraper)
+        st.success(f"Saved `SCRAPER_METHOD={new_scraper}` to .env — restart the app to apply.")
+
+    st.divider()
+
     # Advisory Role Titles (enrichment-related)
     st.subheader("Advisory Role Titles")
     st.caption(

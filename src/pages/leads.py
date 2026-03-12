@@ -32,8 +32,18 @@ def _batch_research_dialog(leads_info: list[dict]) -> None:
     with col_yes:
         if st.button("Research all", type="primary", use_container_width=True):
             store = _get_store()
+            st.session_state.pop("_batch_research_stop", None)
+            st.button(
+                "⏹ Stop after this person",
+                key="btn_stop_batch_research",
+                on_click=lambda: st.session_state.update({"_batch_research_stop": True}),
+            )
             progress = st.progress(0, text="Starting research...")
+            stopped_at = None
             for i, info in enumerate(leads_info):
+                if st.session_state.get("_batch_research_stop"):
+                    stopped_at = i
+                    break
                 progress.progress((i + 1) / len(leads_info), text=f"Researching {info['name']}...")
                 try:
                     from src.data.investigator_runner import run_research
@@ -42,8 +52,12 @@ def _batch_research_dialog(leads_info: list[dict]) -> None:
                     do_enrich(store, info["name"], "Lead", report_md)
                 except Exception as e:
                     st.warning(f"Research failed for {info['name']}: {e}")
-            progress.progress(1.0, text="All research complete!")
-            st.success(f"Research complete for {len(leads_info)} leads.")
+            st.session_state.pop("_batch_research_stop", None)
+            if stopped_at is not None:
+                st.info(f"Stopped after {stopped_at}/{len(leads_info)} people.")
+            else:
+                progress.progress(1.0, text="All research complete!")
+                st.success(f"Research complete for {len(leads_info)} leads.")
             st.rerun()
     with col_no:
         if st.button("Skip for now", use_container_width=True):
@@ -375,7 +389,7 @@ for i, (s, count) in enumerate(sorted(status_counts.items())):
 
 st.caption(f"{len(leads)} leads shown.")
 
-tab_list, tab_detail = st.tabs(["List View", "Detail Table"])
+tab_detail, tab_list = st.tabs(["Detail Table", "List View"])
 
 with tab_list:
     # Header row

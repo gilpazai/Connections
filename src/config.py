@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.2:3b"
     ollama_base_url: str = "http://localhost:11434"
 
+    # Scraper method: "clipboard" (Cmd+A/Cmd+C) or "dom" (JavaScript extraction)
+    scraper_method: str = "clipboard"
+
     # App behavior
     log_level: str = "INFO"
 

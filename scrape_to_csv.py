@@ -62,12 +62,19 @@ def main() -> None:
         sys.exit(1)
 
     # Import here so .env is loaded via src.config before use
-    from src.data.linkedin_clipboard_scraper import scrape_profile_via_clipboard
     from src.data.linkedin_profile_parser import parse_full_profile_with_llm
     from src.data.lead_csv_exporter import profiles_to_csv
     from src.config import settings
 
+    if settings.scraper_method.lower() == "dom":
+        from src.data.linkedin_scraper import scrape_linkedin_experience as scrape_fn
+        scraper_label = "DOM (JavaScript)"
+    else:
+        from src.data.linkedin_clipboard_scraper import scrape_profile_via_clipboard as scrape_fn
+        scraper_label = "Clipboard (Cmd+A/Cmd+C)"
+
     print(f"Provider : {settings.llm_provider} / {_active_model(settings)}")
+    print(f"Scraper  : {scraper_label}")
     print(f"Profiles : {len(urls)}")
     print(f"Output   : {args.output}")
     print()
@@ -80,7 +87,7 @@ def main() -> None:
         print(f"[{i}/{len(urls)}] {url}")
         try:
             print("  Scraping...", end="", flush=True)
-            raw_text = scrape_profile_via_clipboard(url)
+            raw_text = scrape_fn(url)
             print(f" {len(raw_text):,} chars")
 
             print("  Parsing with LLM...", end="", flush=True)
