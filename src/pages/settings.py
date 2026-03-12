@@ -12,13 +12,19 @@ from src.engine.rules.registry import create_default_registry
 _ENV_PATH = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
 
 _GEMINI_MODELS = [
-    "gemini-2.5-flash",
     "gemini-2.5-pro",
+    "gemini-2.5-flash",
     "gemini-2.0-flash",
     "gemini-2.0-flash-lite",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash",
 ]
 
 _ANTHROPIC_MODELS = [
+    "claude-3-7-sonnet-20250219",
+    "claude-3-5-sonnet-20241022",
+    "claude-3-5-haiku-20241022",
+    "claude-3-opus-20240229",
     "claude-haiku-4-5-20251001",
     "claude-sonnet-4-5-20251001",
     "claude-opus-4-5-20251001",
@@ -27,17 +33,67 @@ _ANTHROPIC_MODELS = [
 _OPENAI_MODELS = [
     "gpt-4o-mini",
     "gpt-4o",
+    "o3-mini",
+    "o1-mini",
+    "o1",
+    "gpt-4.5-preview",
     "gpt-4-turbo",
     "gpt-3.5-turbo",
 ]
 
 # OpenAI pricing: (input_cost_per_1M, output_cost_per_1M)
 _OPENAI_PRICING = {
-    "gpt-4o-mini": (0.15, 0.60),
-    "gpt-4o": (2.50, 10.00),
-    "gpt-4-turbo": (10.00, 30.00),
-    "gpt-3.5-turbo": (0.50, 1.50),
+    "gpt-4o-mini":     (0.15,   0.60),
+    "gpt-4o":          (2.50,  10.00),
+    "o3-mini":         (1.10,   4.40),
+    "o1-mini":         (1.10,   4.40),
+    "o1":              (15.00, 60.00),
+    "gpt-4.5-preview": (75.00, 150.00),
+    "gpt-4-turbo":     (10.00,  30.00),
+    "gpt-3.5-turbo":   (0.50,   1.50),
 }
+
+
+def _fetch_openai_models(api_key: str) -> tuple[list[str], str]:
+    try:
+        import openai
+        client = openai.OpenAI(api_key=api_key)
+        skip = ("realtime", "audio", "instruct", "tts", "whisper", "dall-e",
+                "embedding", "moderation", "babbage", "davinci", "search")
+        prefixes = ("gpt-", "o1", "o3", "o4")
+        models = sorted(
+            m.id for m in client.models.list().data
+            if any(m.id.startswith(p) for p in prefixes)
+            and not any(t in m.id for t in skip)
+        )
+        return models, ""
+    except Exception as e:
+        return [], str(e)
+
+
+def _fetch_gemini_models(api_key: str) -> tuple[list[str], str]:
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        models = sorted(
+            m.name.replace("models/", "")
+            for m in genai.list_models()
+            if "generateContent" in (m.supported_generation_methods or [])
+            and "gemini" in m.name.lower()
+        )
+        return models, ""
+    except Exception as e:
+        return [], str(e)
+
+
+def _fetch_anthropic_models(api_key: str) -> tuple[list[str], str]:
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        models = sorted(m.id for m in client.models.list().data)
+        return models, ""
+    except Exception as e:
+        return [], str(e)
 
 # Estimated token usage per enrichment (average LinkedIn profile)
 _TOKENS_PER_ENRICHMENT = {
@@ -100,7 +156,7 @@ with tab_llm:
     current_provider = settings.llm_provider.lower()
     provider_idx = _PROVIDERS.index(current_provider) if current_provider in _PROVIDERS else 0
 
-    col_p, col_m = st.columns(2)
+    col_p, col_m, col_r = st.columns([2, 2, 1])
 
     with col_p:
         new_provider = st.selectbox(
@@ -111,16 +167,17 @@ with tab_llm:
         )
 
     with col_m:
+        _session_key = f"fetched_models_{new_provider}"
         if new_provider == "gemini":
-            model_options = _GEMINI_MODELS
+            _default_models = _GEMINI_MODELS
             current_model = settings.gemini_model
             model_key = "GEMINI_MODEL"
         elif new_provider == "anthropic":
-            model_options = _ANTHROPIC_MODELS
+            _default_models = _ANTHROPIC_MODELS
             current_model = settings.anthropic_model
             model_key = "ANTHROPIC_MODEL"
         elif new_provider == "openai":
-            model_options = _OPENAI_MODELS
+            _default_models = _OPENAI_MODELS
             current_model = settings.openai_model
             model_key = "OPENAI_MODEL"
         else:  # ollama
@@ -128,18 +185,38 @@ with tab_llm:
                 try:
                     import httpx, json
                     r = httpx.get(f"{settings.ollama_base_url}/api/tags", timeout=2.0)
-                    model_options = [m["name"] for m in r.json().get("models", [])]
+                    _default_models = [m["name"] for m in r.json().get("models", [])]
                 except Exception:
-                    model_options = []
+                    _default_models = []
             else:
-                model_options = []
-            if not model_options:
-                model_options = [settings.ollama_model]
+                _default_models = []
+            if not _default_models:
+                _default_models = [settings.ollama_model]
             current_model = settings.ollama_model
             model_key = "OLLAMA_MODEL"
 
+        model_options = st.session_state.get(_session_key) or _default_models
         model_idx = model_options.index(current_model) if current_model in model_options else 0
         new_model = st.selectbox("Model", model_options, index=model_idx)
+
+    with col_r:
+        st.write("")
+        st.write("")
+        if new_provider in ("openai", "gemini", "anthropic"):
+            if st.button("Refresh", key="btn_refresh_models", help=f"Fetch available {new_provider} models from API", use_container_width=True):
+                with st.spinner("Fetching..."):
+                    if new_provider == "openai":
+                        fetched, err = _fetch_openai_models(settings.openai_api_key or "")
+                    elif new_provider == "gemini":
+                        fetched, err = _fetch_gemini_models(settings.google_api_key or "")
+                    else:
+                        fetched, err = _fetch_anthropic_models(settings.anthropic_api_key or "")
+                if fetched:
+                    st.session_state[_session_key] = fetched
+                    st.success(f"{len(fetched)} models")
+                    st.rerun()
+                else:
+                    st.error(err or "No models returned")
 
     active_label = f"**Active:** `{settings.llm_provider}` / `{current_model}`"
     if new_provider != current_provider or new_model != current_model:

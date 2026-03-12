@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 
+from src.pages._cached_data import invalidate_all
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,7 +25,7 @@ def do_enrich(store, person_name: str, person_type: str, raw_text: str, notion_p
 
     positions = parse_linkedin_with_llm(raw_text)
 
-    store.delete_work_history_by_name(person_name)
+    store.delete_work_history(person_name=person_name)
 
     def _parse_any_date(value):
         if not value:
@@ -78,6 +80,7 @@ def do_enrich(store, person_name: str, person_type: str, raw_text: str, notion_p
             created, _ = store_new_matches(matches, store)
             new_matches = created
 
+    invalidate_all()
     return count, positions, new_matches
 
 

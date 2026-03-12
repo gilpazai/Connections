@@ -168,7 +168,7 @@ def store_batch(filepath: str) -> None:
         print(f"\n[{i}/{len(records)}] {person_name} ({len(positions)} positions)")
 
         # Delete old work history
-        deleted = store.delete_work_history_by_name(person_name)
+        deleted = store.delete_work_history(person_name=person_name)
         total_deleted += deleted
         if deleted:
             print(f"  Deleted {deleted} old entries")

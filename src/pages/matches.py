@@ -8,23 +8,18 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-from src.data.notion_store import NotionStore
+from src.pages._cached_data import cached, invalidate_all
+from src.pages._store import get_store
 
 logger = logging.getLogger(__name__)
 
 STATUS_OPTIONS = ["New", "Request Intro", "Intro", "In CRM"]
 
 
-def _get_store() -> NotionStore:
-    if "notion_store" not in st.session_state:
-        st.session_state.notion_store = NotionStore()
-    return st.session_state.notion_store
-
-
 st.title("Matches")
 st.caption("Discovered warm introduction paths between your contacts and leads.")
 
-store = _get_store()
+store = get_store()
 
 # ── Filters ──────────────────────────────────────────────────────────────────
 
@@ -61,15 +56,17 @@ if recheck_btn:
             created, skipped = store_new_matches(new_matches, store)
             st.success(f"Done: {created} new match(es), {skipped} duplicate(s) skipped.")
             if created:
+                invalidate_all()
                 st.rerun()
 
 # ── Load matches ─────────────────────────────────────────────────────────────
 
 try:
-    matches = store.get_all_matches(
+    _match_cache_key = f"matches_{status_filter}_{confidence_filter}"
+    matches = cached(_match_cache_key, lambda: store.get_all_matches(
         status=None if status_filter == "All" else status_filter,
         confidence=None if confidence_filter == "All" else confidence_filter,
-    )
+    ))
 except Exception as e:
     st.error(f"Could not load matches: {e}")
     matches = []
@@ -83,7 +80,7 @@ if not matches:
 all_matches = matches
 if status_filter != "All" or confidence_filter != "All":
     try:
-        all_matches = store.get_all_matches()
+        all_matches = cached("matches_All_All", lambda: store.get_all_matches())
     except Exception:
         all_matches = matches
 
@@ -189,6 +186,7 @@ if save_btn:
 
     if changes:
         st.success(f"Updated {changes} match(es).")
+        invalidate_all()
         st.rerun()
     else:
         st.info("No changes detected.")

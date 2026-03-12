@@ -7,16 +7,11 @@ from datetime import date
 
 import streamlit as st
 
-from src.data.notion_store import NotionStore
 from src.models.lead import Lead
+from src.pages._cached_data import cached, invalidate_all
+from src.pages._store import get_store
 
 logger = logging.getLogger(__name__)
-
-
-def _get_store() -> NotionStore:
-    if "notion_store" not in st.session_state:
-        st.session_state.notion_store = NotionStore()
-    return st.session_state.notion_store
 
 
 # ── Dialogs ──────────────────────────────────────────────────────────────────
@@ -31,7 +26,7 @@ def _batch_research_dialog(leads_info: list[dict]) -> None:
     col_yes, col_no = st.columns(2)
     with col_yes:
         if st.button("Research all", type="primary", use_container_width=True):
-            store = _get_store()
+            store = get_store()
             st.session_state.pop("_batch_research_stop", None)
             st.button(
                 "⏹ Stop after this person",
@@ -58,6 +53,7 @@ def _batch_research_dialog(leads_info: list[dict]) -> None:
             else:
                 progress.progress(1.0, text="All research complete!")
                 st.success(f"Research complete for {len(leads_info)} leads.")
+            invalidate_all()
             st.rerun()
     with col_no:
         if st.button("Skip for now", use_container_width=True):
@@ -66,7 +62,7 @@ def _batch_research_dialog(leads_info: list[dict]) -> None:
 
 @st.dialog("Archive Batch")
 def _archive_batch_dialog() -> None:
-    store = _get_store()
+    store = get_store()
     st.write("Archive all leads in a batch. Archived leads are hidden from the default view.")
     archive_batch = st.text_input("Batch to archive", placeholder="e.g. 2026-02")
     col1, col2 = st.columns(2)
@@ -77,6 +73,7 @@ def _archive_batch_dialog() -> None:
                     count = store.archive_batch(archive_batch)
                     if count:
                         st.success(f"Archived **{count}** leads from batch '{archive_batch}'.")
+                        invalidate_all()
                         st.rerun()
                     else:
                         st.info("No leads found in that batch (or already archived).")
@@ -89,13 +86,14 @@ def _archive_batch_dialog() -> None:
 
 @st.dialog("Delete lead")
 def _confirm_delete_lead(page_id: str, person_name: str) -> None:
-    store = _get_store()
+    store = get_store()
     st.write(f"Delete **{person_name}** and all associated data?")
     st.caption("Removes the lead, their work history, and any matches.")
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Delete", type="primary", use_container_width=True, key="dlg_del_l_confirm"):
             store.delete_lead(page_id, person_name=person_name)
+            invalidate_all()
             st.rerun()
     with col2:
         if st.button("Cancel", use_container_width=True, key="dlg_del_l_cancel"):
@@ -107,7 +105,7 @@ def _confirm_delete_lead(page_id: str, person_name: str) -> None:
 st.title("Leads")
 st.caption("Manage monthly target leads for warm introductions.")
 
-store = _get_store()
+store = get_store()
 
 # ── Import section (consolidated) ────────────────────────────────────────────
 
@@ -166,7 +164,7 @@ with st.expander("Import Leads", expanded=False, icon=":material/upload:"):
                     cleaned_names = set()
                     for entry in work_entries:
                         if entry.person_name not in cleaned_names:
-                            store.delete_work_history_by_name(entry.person_name)
+                            store.delete_work_history(person_name=entry.person_name)
                             cleaned_names.add(entry.person_name)
                     created_history = store.store_work_history(work_entries)
 
@@ -192,6 +190,7 @@ with st.expander("Import Leads", expanded=False, icon=":material/upload:"):
 
                 if imported_names:
                     st.session_state["pending_batch_research"] = imported_names
+                invalidate_all()
                 st.rerun()
             except Exception as e:
                 st.error(f"CSV import failed: {e}")
@@ -243,6 +242,7 @@ with st.expander("Import Leads", expanded=False, icon=":material/upload:"):
                     st.success(msg)
                     if imported_names:
                         st.session_state["pending_batch_research"] = imported_names
+                    invalidate_all()
                     st.rerun()
 
     # --- Tab 3: Add single lead ---
@@ -302,6 +302,7 @@ with st.expander("Import Leads", expanded=False, icon=":material/upload:"):
 
                     st.session_state["post_add_research_name"] = name
                     st.session_state["post_add_research_company"] = company
+                    invalidate_all()
                     st.rerun()
                 except ValueError as e:
                     st.warning(str(e))
@@ -351,13 +352,16 @@ if st.button("Archive Batch", help="Archive all leads in a batch to hide them fr
 # ── Load leads ───────────────────────────────────────────────────────────────
 
 try:
+    cache_key = f"leads_{batch_filter}_{status_filter}"
     if status_filter == "Archived":
-        leads = store.get_all_leads(batch=batch_filter or None, status="Archived")
+        leads = cached(cache_key, lambda: store.get_all_leads(batch=batch_filter or None, status="Archived"))
     elif status_filter and status_filter != "All":
-        leads = store.get_active_leads(batch=batch_filter or None)
-        leads = [l for l in leads if l.status == status_filter]
+        leads = cached(cache_key, lambda: [
+            l for l in store.get_active_leads(batch=batch_filter or None)
+            if l.status == status_filter
+        ])
     else:
-        leads = store.get_active_leads(batch=batch_filter or None)
+        leads = cached(cache_key, lambda: store.get_active_leads(batch=batch_filter or None))
 except Exception as e:
     st.error(f"Could not load leads: {e}")
     leads = []
@@ -367,13 +371,10 @@ if not leads:
     st.stop()
 
 import pandas as pd
-from src.pages._table_helpers import lookup_work_history, position_cells
+from src.pages._table_helpers import lookup_work_history, position_cells, work_history_columns
 from src.pages._enrichment_ui import enrich_from_linkedin_url
 
-try:
-    grouped_wh = store.get_work_histories_grouped(person_type="Lead")
-except Exception:
-    grouped_wh = {}
+grouped_wh = cached("wh_leads", lambda: store.get_work_histories_grouped(person_type="Lead"))
 
 # ── Status metrics (above the list for context) ─────────────────────────────
 
@@ -427,6 +428,7 @@ with tab_list:
                                 if new_matches:
                                     msg += f" {new_matches} new match(es) found."
                                 st.success(msg)
+                                invalidate_all()
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Enrichment failed: {e}")
@@ -441,25 +443,70 @@ with tab_list:
                         _confirm_delete_lead(l.notion_page_id, l.name)
 
 with tab_detail:
-    rows = []
+    _COL_MAP = {
+        "Company":  "company_current",
+        "Title":    "title_current",
+        "Priority": "priority",
+        "Batch":    "batch",
+        "Status":   "status",
+        "LinkedIn": "linkedin_url",
+        "Notes":    "notes",
+    }
+    rows, page_ids = [], []
     for l in leads:
         entries = lookup_work_history(l.dealigence_person_id, l.name, grouped_wh)
         row = {
-            "Name": l.name,
-            "Company": l.company_current,
-            "Title": l.title_current,
+            "Name":     l.name,
+            "Company":  l.company_current,
+            "Title":    l.title_current,
             "Priority": l.priority,
-            "Batch": l.batch,
-            "Status": l.status,
+            "Batch":    l.batch,
+            "Status":   l.status,
             "LinkedIn": l.linkedin_url,
+            "Notes":    l.notes,
         }
         row.update(position_cells(entries, enriched=len(entries) > 0))
         rows.append(row)
+        page_ids.append(l.notion_page_id)
 
     df = pd.DataFrame(rows)
-    st.dataframe(
+    st.data_editor(
         df,
         use_container_width=True,
         hide_index=True,
-        column_config={"LinkedIn": st.column_config.LinkColumn("LinkedIn")},
+        num_rows="fixed",
+        disabled=["Name"] + work_history_columns(),
+        column_config={
+            "Priority": st.column_config.SelectboxColumn(
+                "Priority", options=["High", "Medium", "Low"]
+            ),
+            "Status": st.column_config.SelectboxColumn(
+                "Status", options=["New", "Enriched", "Matched", "Contacted", "Converted"]
+            ),
+        },
+        key="leads_detail_editor",
     )
+    if st.button("Save changes", key="save_leads_detail"):
+        edited_rows = st.session_state.get("leads_detail_editor", {}).get("edited_rows", {})
+        if not edited_rows:
+            st.info("No changes to save.")
+        else:
+            errors = []
+            for row_idx, changes in edited_rows.items():
+                page_id = page_ids[row_idx]
+                kwargs = {}
+                for col, val in changes.items():
+                    if col not in _COL_MAP:
+                        continue
+                    kwargs[_COL_MAP[col]] = val
+                if kwargs:
+                    try:
+                        store.update_lead(page_id, **kwargs)
+                    except Exception as e:
+                        errors.append(f"{rows[row_idx]['Name']}: {e}")
+            if errors:
+                st.error("Errors: " + "; ".join(errors))
+            else:
+                st.success(f"Saved {len(edited_rows)} change(s).")
+                invalidate_all()
+                st.rerun()

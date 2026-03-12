@@ -7,6 +7,7 @@ from datetime import date
 from src.models.contact import WorkHistoryEntry
 
 N_POSITIONS = 5
+N_ADVISORY = 5
 
 
 def _format_period(start: date | None, end: date | None) -> str:
@@ -20,7 +21,8 @@ def work_history_columns() -> list[str]:
     cols = []
     for i in range(1, N_POSITIONS + 1):
         cols += [f"Employer {i}", f"Title {i}", f"Period {i}"]
-    cols.append("Advisory Roles")
+    for i in range(1, N_ADVISORY + 1):
+        cols += [f"Adv Employer {i}", f"Adv Title {i}"]
     return cols
 
 
@@ -76,12 +78,15 @@ def position_cells(
             row[f"Title {idx}"] = "N/A"
             row[f"Period {idx}"] = "N/A"
 
-    if advisory:
-        row["Advisory Roles"] = ", ".join(
-            f"{e.role_title} @ {e.employer_name}" for e in advisory
-        )
-    else:
-        row["Advisory Roles"] = ""
+    for i in range(N_ADVISORY):
+        idx = i + 1
+        if i < len(advisory):
+            e = advisory[i]
+            row[f"Adv Employer {idx}"] = e.employer_name
+            row[f"Adv Title {idx}"] = e.role_title
+        else:
+            row[f"Adv Employer {idx}"] = "N/A"
+            row[f"Adv Title {idx}"] = "N/A"
 
     return row
 

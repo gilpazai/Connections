@@ -5,22 +5,17 @@ from __future__ import annotations
 import logging
 import streamlit as st
 
-from src.data.notion_store import NotionStore
+from src.pages._cached_data import cached, invalidate_all
+from src.pages._store import get_store
 
 logger = logging.getLogger(__name__)
 
 _ENRICH_BATCH_SIZE = 5
 
 
-def _get_store() -> NotionStore:
-    if "notion_store" not in st.session_state:
-        st.session_state.notion_store = NotionStore()
-    return st.session_state.notion_store
-
-
-def _safe_load(loader, default=None):
+def _safe_load(key, loader, default=None):
     try:
-        return loader()
+        return cached(key, loader)
     except Exception as e:
         logger.warning("Failed to load data: %s", e)
         return default
@@ -28,13 +23,13 @@ def _safe_load(loader, default=None):
 
 st.title("VC Connections Dashboard")
 
-store = _get_store()
+store = get_store()
 
 # ── Summary metrics ──────────────────────────────────────────────────────────
 
-contacts = _safe_load(lambda: store.get_all_contacts(status="Active"), [])
-leads = _safe_load(lambda: store.get_all_leads(), [])
-matches = _safe_load(lambda: store.get_all_matches(), [])
+contacts = _safe_load("dash_contacts", lambda: store.get_all_contacts(status="Active"), [])
+leads = _safe_load("dash_leads", lambda: store.get_all_leads(), [])
+matches = _safe_load("dash_matches", lambda: store.get_all_matches(), [])
 new_matches = [m for m in (matches or []) if m.status == "New"]
 
 col1, col2, col3, col4 = st.columns(4)
@@ -79,6 +74,7 @@ if st.session_state.get("_enrich_queue") is not None:
         )
         for k in ("_enrich_queue", "_enrich_total", "_enrich_counters", "_enrich_mode", "_enrich_stop"):
             st.session_state.pop(k, None)
+        invalidate_all()
         st.rerun()
 
     queue = st.session_state["_enrich_queue"]
@@ -87,7 +83,7 @@ if st.session_state.get("_enrich_queue") is not None:
     mode  = st.session_state.get("_enrich_mode", "linkedin")
     label = "Enriching" if mode == "linkedin" else "Researching"
 
-    batch = [queue.pop(0) for _ in range(min(_ENRICH_BATCH_SIZE, len(queue) + 1))]
+    batch = [queue.pop(0) for _ in range(min(_ENRICH_BATCH_SIZE, len(queue)))]
     st.session_state["_enrich_queue"] = queue
 
     batch_start = done + 1
@@ -130,6 +126,7 @@ if st.session_state.get("_enrich_queue") is not None:
         )
         for k in ("_enrich_queue", "_enrich_total", "_enrich_counters", "_enrich_mode", "_enrich_stop"):
             st.session_state.pop(k, None)
+        invalidate_all()
         st.rerun()
 
 # ── Bulk enrich actions ───────────────────────────────────────────────────────

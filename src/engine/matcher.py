@@ -128,26 +128,29 @@ def store_new_matches(
 ) -> tuple[int, int]:
     """Store matches with dedup and LinkedIn/company population.
 
-    Loads all contacts and leads once to populate linkedin, company, title
-    on each Match. Checks match_exists() for dedup.
+    Loads all contacts, leads, and existing matches once to populate metadata
+    and deduplicate in-memory (avoids N individual match_exists API calls).
 
     Returns (created_count, skipped_count).
     """
     if not matches:
         return 0, 0
 
-    # Load contacts and leads for populating match metadata
     contacts = store.get_all_contacts()
     leads = store.get_all_leads()
+    existing = store.get_all_matches()
 
     contact_map = {c.name: c for c in contacts}
     lead_map = {l.name: l for l in leads}
+    existing_keys = {
+        (m.contact_name, m.lead_name, m.shared_company)
+        for m in existing
+    }
 
     created = 0
     skipped = 0
 
     for match in matches:
-        # Populate LinkedIn URLs and lead details
         contact = contact_map.get(match.contact_name)
         lead = lead_map.get(match.lead_name)
 
@@ -160,11 +163,13 @@ def store_new_matches(
 
         match.date_updated = date.today()
 
-        if store.match_exists(match):
+        key = (match.contact_name, match.lead_name, match.shared_company)
+        if key in existing_keys:
             skipped += 1
             continue
 
         store.create_match(match)
+        existing_keys.add(key)
         created += 1
 
     logger.info("Stored matches: %d created, %d skipped (dupes)", created, skipped)

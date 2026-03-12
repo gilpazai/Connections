@@ -125,7 +125,7 @@ class NotionStore:
         self.leads_db = leads_db_id or settings.notion_leads_db_id
         self.work_history_db = work_history_db_id or settings.notion_work_history_db_id
         self.matches_db = matches_db_id or settings.notion_matches_db_id
-        self._ensure_work_history_schema()
+        self._schema_ensured = False
 
     def _ensure_work_history_schema(self) -> None:
         """Add any missing properties to the Work History database.
@@ -204,6 +204,24 @@ class NotionStore:
         if dealigence_id:
             props["Dealigence Person ID"] = _rich_text(dealigence_id)
         self.client.pages.update(page_id=page_id, properties=props)
+
+    def update_contact(self, page_id: str, **fields) -> None:
+        props: dict[str, Any] = {}
+        field_map = {
+            "company_current":       ("Company (Current)",     _rich_text),
+            "title_current":         ("Title (Current)",       _rich_text),
+            "relationship_strength": ("Relationship Strength", _select),
+            "tags":                  ("Tags",                  _multi_select),
+            "status":                ("Status",                _select),
+            "linkedin_url":          ("LinkedIn URL",          _url),
+            "notes":                 ("Notes",                 _rich_text),
+        }
+        for key, value in fields.items():
+            if key in field_map:
+                prop_name, builder = field_map[key]
+                props[prop_name] = builder(value)
+        if props:
+            self.client.pages.update(page_id=page_id, properties=props)
 
     def _page_to_contact(self, page: dict) -> Contact:
         p = page["properties"]
@@ -295,11 +313,23 @@ class NotionStore:
             props["Dealigence Person ID"] = _rich_text(dealigence_id)
         self.client.pages.update(page_id=page_id, properties=props)
 
-    def update_lead_status(self, page_id: str, status: str) -> None:
-        self.client.pages.update(
-            page_id=page_id,
-            properties={"Status": _select(status)},
-        )
+    def update_lead(self, page_id: str, **fields) -> None:
+        props: dict[str, Any] = {}
+        field_map = {
+            "company_current": ("Company (Current)", _rich_text),
+            "title_current":   ("Title (Current)",   _rich_text),
+            "priority":        ("Priority",          _select),
+            "batch":           ("Batch",             _rich_text),
+            "status":          ("Status",            _select),
+            "linkedin_url":    ("LinkedIn URL",      _url),
+            "notes":           ("Notes",             _rich_text),
+        }
+        for key, value in fields.items():
+            if key in field_map:
+                prop_name, builder = field_map[key]
+                props[prop_name] = builder(value)
+        if props:
+            self.client.pages.update(page_id=page_id, properties=props)
 
     def _page_to_lead(self, page: dict) -> Lead:
         p = page["properties"]
@@ -325,6 +355,9 @@ class NotionStore:
         """Store work history entries in Notion. Returns count of entries created."""
         if not entries:
             return 0
+        if not self._schema_ensured:
+            self._ensure_work_history_schema()
+            self._schema_ensured = True
 
         def _create(entry: WorkHistoryEntry) -> None:
             props = {
@@ -351,22 +384,18 @@ class NotionStore:
                 f.result()  # re-raise any exception
         return len(entries)
 
-    def delete_work_history_for_person(self, source_person_id: str) -> int:
-        """Archive all work history entries for a person (for re-enrichment)."""
+    def delete_work_history(self, *, person_id: str = "", person_name: str = "") -> int:
+        """Archive work history entries by source person ID or person name."""
+        if person_id:
+            filt = {"property": "Source Person ID", "rich_text": {"equals": person_id}}
+        elif person_name:
+            filt = {"property": "Person Name", "title": {"equals": person_name}}
+        else:
+            return 0
         pages = list(iterate_paginated_api(
             self.client.databases.query,
             database_id=self.work_history_db,
-            filter={"property": "Source Person ID", "rich_text": {"equals": source_person_id}},
-        ))
-        self._archive_pages_parallel(pages)
-        return len(pages)
-
-    def delete_work_history_by_name(self, person_name: str) -> int:
-        """Archive all work history entries for a person by name."""
-        pages = list(iterate_paginated_api(
-            self.client.databases.query,
-            database_id=self.work_history_db,
-            filter={"property": "Person Name", "title": {"equals": person_name}},
+            filter=filt,
         ))
         self._archive_pages_parallel(pages)
         return len(pages)
@@ -446,28 +475,35 @@ class NotionStore:
             database_id=self.leads_db,
             filter={"property": "Batch", "rich_text": {"equals": batch}},
         ))
-        count = 0
-        for page in pages:
-            status = _read_select(page["properties"].get("Status", {}))
-            if status != "Archived":
-                self.client.pages.update(
-                    page_id=page["id"],
-                    properties={"Status": _select("Archived")},
-                )
-                count += 1
-        return count
+        to_archive = [
+            p for p in pages
+            if _read_select(p["properties"].get("Status", {})) != "Archived"
+        ]
+        if to_archive:
+            with ThreadPoolExecutor(max_workers=5) as pool:
+                futures = [
+                    pool.submit(
+                        self.client.pages.update,
+                        page_id=p["id"],
+                        properties={"Status": _select("Archived")},
+                    )
+                    for p in to_archive
+                ]
+                for f in as_completed(futures):
+                    f.result()
+        return len(to_archive)
 
     def delete_contact(self, page_id: str, person_name: str = "") -> None:
         """Delete a contact and all associated data (work history, matches)."""
         if person_name:
-            self.delete_work_history_by_name(person_name)
+            self.delete_work_history(person_name=person_name)
             self.delete_matches_for_person(person_name)
         self.client.pages.update(page_id=page_id, archived=True)
 
     def delete_lead(self, page_id: str, person_name: str = "") -> None:
         """Delete a lead and all associated data (work history, matches)."""
         if person_name:
-            self.delete_work_history_by_name(person_name)
+            self.delete_work_history(person_name=person_name)
             self.delete_matches_for_person(person_name)
         self.client.pages.update(page_id=page_id, archived=True)
 
@@ -507,8 +543,7 @@ class NotionStore:
             self.client.databases.query,
             database_id=self.matches_db,
         ))
-        for page in pages:
-            self.client.pages.update(page_id=page["id"], archived=True)
+        self._archive_pages_parallel(pages)
         return len(pages)
 
     def get_active_leads(self, batch: str | None = None) -> list[Lead]:

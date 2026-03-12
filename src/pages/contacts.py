@@ -6,19 +6,13 @@ import logging
 
 import streamlit as st
 
-from src.data.notion_store import NotionStore
 from src.models.contact import Contact
+from src.pages._cached_data import cached, invalidate_all
+from src.pages._store import get_store
 
 logger = logging.getLogger(__name__)
 
-
-def _get_store() -> NotionStore:
-    if "notion_store" not in st.session_state:
-        st.session_state.notion_store = NotionStore()
-    return st.session_state.notion_store
-
-
-store = _get_store()
+store = get_store()
 
 # ── Page header ──────────────────────────────────────────────────────────────
 
@@ -87,6 +81,7 @@ with st.expander("Add New Contact", expanded=False, icon=":material/person_add:"
 
                 st.session_state["post_add_research_name"] = name
                 st.session_state["post_add_research_company"] = company
+                invalidate_all()
                 st.rerun()
             except ValueError as e:
                 st.warning(str(e))
@@ -129,7 +124,7 @@ status_filter = st.pills(
 
 try:
     status = None if status_filter == "All" else status_filter
-    contacts = store.get_all_contacts(status=status)
+    contacts = cached(f"contacts_{status}", lambda: store.get_all_contacts(status=status))
 except Exception as e:
     st.error(f"Could not load contacts: {e}")
     contacts = []
@@ -139,13 +134,10 @@ if not contacts:
     st.stop()
 
 import pandas as pd
-from src.pages._table_helpers import lookup_work_history, position_cells
+from src.pages._table_helpers import lookup_work_history, position_cells, work_history_columns
 from src.pages._enrichment_ui import enrich_from_linkedin_url
 
-try:
-    grouped_wh = store.get_work_histories_grouped(person_type="Contact")
-except Exception:
-    grouped_wh = {}
+grouped_wh = None  # lazy-loaded in detail tab
 
 # ── Delete confirmation dialog ───────────────────────────────────────────────
 
@@ -157,6 +149,7 @@ def _confirm_delete(page_id: str, person_name: str):
     with col1:
         if st.button("Delete", type="primary", use_container_width=True, key="dlg_del_confirm"):
             store.delete_contact(page_id, person_name=person_name)
+            invalidate_all()
             st.rerun()
     with col2:
         if st.button("Cancel", use_container_width=True, key="dlg_del_cancel"):
@@ -201,6 +194,7 @@ with tab_list:
                                 if new_matches:
                                     msg += f" {new_matches} new match(es) found."
                                 st.success(msg)
+                                invalidate_all()
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Enrichment failed: {e}")
@@ -215,25 +209,74 @@ with tab_list:
                         _confirm_delete(c.notion_page_id, c.name)
 
 with tab_detail:
-    rows = []
+    grouped_wh = cached("wh_contacts", lambda: store.get_work_histories_grouped(person_type="Contact"))
+    _COL_MAP = {
+        "Company":  "company_current",
+        "Title":    "title_current",
+        "Strength": "relationship_strength",
+        "Tags":     "tags",
+        "Status":   "status",
+        "LinkedIn": "linkedin_url",
+        "Notes":    "notes",
+    }
+    rows, page_ids = [], []
     for c in contacts:
         entries = lookup_work_history(c.dealigence_person_id, c.name, grouped_wh)
         row = {
-            "Name": c.name,
-            "Company": c.company_current,
-            "Title": c.title_current,
+            "Name":     c.name,
+            "Company":  c.company_current,
+            "Title":    c.title_current,
             "Strength": c.relationship_strength,
-            "Tags": ", ".join(c.tags),
-            "Status": c.status,
+            "Tags":     ", ".join(c.tags),
+            "Status":   c.status,
             "LinkedIn": c.linkedin_url,
+            "Notes":    c.notes,
         }
         row.update(position_cells(entries, enriched=c.last_enriched is not None))
         rows.append(row)
+        page_ids.append(c.notion_page_id)
 
     df = pd.DataFrame(rows)
-    st.dataframe(
+    st.data_editor(
         df,
         use_container_width=True,
         hide_index=True,
-        column_config={"LinkedIn": st.column_config.LinkColumn("LinkedIn")},
+        num_rows="fixed",
+        disabled=["Name"] + work_history_columns(),
+        column_config={
+            "Strength": st.column_config.SelectboxColumn(
+                "Strength", options=["Close", "Medium", "Loose"]
+            ),
+            "Status": st.column_config.SelectboxColumn(
+                "Status", options=["Active", "Inactive"]
+            ),
+        },
+        key="contacts_detail_editor",
     )
+    if st.button("Save changes", key="save_contacts_detail"):
+        edited_rows = st.session_state.get("contacts_detail_editor", {}).get("edited_rows", {})
+        if not edited_rows:
+            st.info("No changes to save.")
+        else:
+            errors = []
+            for row_idx, changes in edited_rows.items():
+                page_id = page_ids[row_idx]
+                kwargs = {}
+                for col, val in changes.items():
+                    if col not in _COL_MAP:
+                        continue
+                    field = _COL_MAP[col]
+                    if field == "tags":
+                        val = [t.strip() for t in str(val).split(",") if t.strip()]
+                    kwargs[field] = val
+                if kwargs:
+                    try:
+                        store.update_contact(page_id, **kwargs)
+                    except Exception as e:
+                        errors.append(f"{rows[row_idx]['Name']}: {e}")
+            if errors:
+                st.error("Errors: " + "; ".join(errors))
+            else:
+                st.success(f"Saved {len(edited_rows)} change(s).")
+                invalidate_all()
+                st.rerun()

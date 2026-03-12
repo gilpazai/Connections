@@ -12,15 +12,9 @@ from src.data.investigator_runner import (
     get_cached_report,
     run_research,
 )
-from src.data.notion_store import NotionStore
+from src.pages._store import get_store
 
 logger = logging.getLogger(__name__)
-
-
-def _get_store() -> NotionStore:
-    if "notion_store" not in st.session_state:
-        st.session_state.notion_store = NotionStore()
-    return st.session_state.notion_store
 
 
 st.title("Research")
@@ -83,7 +77,7 @@ else:
 # ── Enrich work history from report ───────────────────────────────────────────
 
 if person_type and name:
-    store = _get_store()
+    store = get_store()
     auto_expand = bool(person_type and name)
     with st.expander("Extract & Store Work History", expanded=auto_expand):
         st.markdown(

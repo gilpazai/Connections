@@ -60,7 +60,7 @@ def store_work_history(person_name: str, person_type: str, positions_json: str):
     positions = json.loads(positions_json)
 
     # Delete old work history for this person (replaces CSV data with richer MCP data)
-    deleted = store.delete_work_history_by_name(person_name)
+    deleted = store.delete_work_history(person_name=person_name)
     if deleted:
         print(f"Deleted {deleted} old work history entries for {person_name}")
 
