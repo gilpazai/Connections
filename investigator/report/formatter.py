@@ -10,11 +10,10 @@ class ReportFormatter:
     """Assembles SectionResult objects into a complete Markdown report."""
 
     SECTION_ORDER = [
-        "Professional Profile",
-        "Expertise & Topics",
-        "Recent Activity",
-        "Thesis & Worldview",
-        "Social Footprint",
+        "Work Experience",
+        "Recent Posts",
+        "Recent Comments",
+        "News & Articles",
     ]
 
     def format(

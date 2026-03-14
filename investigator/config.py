@@ -9,8 +9,12 @@ class InvestigatorConfig:
     company: str | None = None
     model: str = "llama3.2"
     gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.5-flash"
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
+    anthropic_api_key: str | None = None
+    anthropic_model: str = "claude-haiku-4-5-20251001"
+    llm_provider: str | None = None
     output_path: str = ""
     use_cache: bool = True
     sections: list[str] = field(default_factory=list)
@@ -27,16 +31,18 @@ class InvestigatorConfig:
 
     ALL_SECTIONS: list[str] = field(
         default_factory=lambda: [
-            "professional",
-            "expertise",
-            "social",
-            "activity",
-            "thesis",
+            "experience",
+            "posts",
+            "comments",
+            "articles",
         ],
         repr=False,
     )
 
     def __post_init__(self) -> None:
+        import os
+        if not self.openai_api_key:
+            self.openai_api_key = os.environ.get("OPENAI_API_KEY")
         if not self.sections:
             self.sections = list(self.ALL_SECTIONS)
         if not self.output_path:

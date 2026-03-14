@@ -26,6 +26,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--gemini-key", default=None, dest="gemini_key", help="Google Gemini API key for LLM fallback"
     )
+    import os
+    parser.add_argument(
+        "--openai-key", default=os.environ.get("OPENAI_API_KEY"), dest="openai_key", help="OpenAI API key"
+    )
     parser.add_argument(
         "--output", default="", help="Output file path (default: report_{name}.md)"
     )
@@ -36,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--sections",
         nargs="+",
         default=[],
-        choices=["professional", "expertise", "activity", "thesis", "social"],
+        choices=["experience", "posts", "comments", "articles"],
         help="Run only specific sections",
     )
     parser.add_argument(
@@ -60,6 +64,7 @@ def main() -> None:
         company=args.company,
         model=args.model,
         gemini_api_key=args.gemini_key,
+        openai_api_key=args.openai_key,
         output_path=args.output,
         use_cache=not args.no_cache,
         sections=args.sections,

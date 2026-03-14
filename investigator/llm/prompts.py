@@ -15,53 +15,41 @@ BASE_SYSTEM = (
     "target's verified company/industry.\n"
 )
 
-# ── Section-specific prompts ─────────────────────────────────────────
-
-PROFESSIONAL_SYSTEM = BASE_SYSTEM + (
-    "\nYou are writing the 'Professional Profile' section.\n"
-    "Cover: current role & organization, career history, education, "
-    "key hard skills, industry/domain.\n"
-    "Hunt for 'Founder DNA': military intelligence units (e.g., 8200/9900), "
-    "academic awards, and rapid career progression.\n"
-    "Write 2-4 short paragraphs. If data is sparse, produce a shorter "
-    "summary and note what could not be determined."
+EXPERIENCE_SYSTEM = BASE_SYSTEM + (
+    "\nYou are writing the 'Work Experience' section based on raw LinkedIn experience text.\n"
+    "Extract all professional work experience entries.\n"
+    "For each entry, include the exact role, company name, dates of employment, and a brief summary of their responsibilities.\n"
+    "Format as a chronological list (newest to oldest)."
 )
 
-EXPERTISE_SYSTEM = BASE_SYSTEM + (
-    "\nYou are writing the 'Expertise & Topics' section.\n"
-    "Identify key domains, technologies, and subjects this person is known for.\n"
-    "Group related topics. Include evidence (e.g., conferences, publications).\n"
-    "Format: 3-7 bullet points with evidence, then a short concluding paragraph."
+POSTS_SYSTEM = BASE_SYSTEM + (
+    "\nYou are writing the 'Recent Posts' section based on raw LinkedIn activity page text.\n"
+    "Extract up to the 5 most recent posts made by the target person.\n"
+    "For each post, provide:\n"
+    "1. A single-sentence summary of the topic of the post.\n"
+    "2. The original text of the post.\n"
+    "3. Date (use the provided current date to calculate from relative times like '1w').\n"
+    "CRITICAL: Extract posts authored by the target. The scraped text is messy and often indicates authorship with the target's name followed by 'You'. Do NOT ignore these posts. If it is a post they wrote, extract it!\n"
+    "DO NOT invent any posts."
 )
 
-THESIS_SYSTEM = BASE_SYSTEM + (
-    "\nYou are writing the 'Thesis & Worldview' section.\n"
-    "Identify the founder's unique worldview, perspective on the market, "
-    "and core thesis.\n"
-    "Write 1-2 paragraphs summarizing their worldview. Do NOT include subheadings "
-    "like 'Potential Unfair Advantage', 'Notable Statements', or 'Themes'. "
-    "Keep it entirely in flowing prose.\n"
-    "If very little worldview context is found, state that explicitly."
+COMMENTS_SYSTEM = BASE_SYSTEM + (
+    "\nYou are writing the 'Recent Comments' section based on raw LinkedIn activity page text.\n"
+    "Extract exactly the 5 most recent comments made by the target person.\n"
+    "For each comment, provide:\n"
+    "1. The exact text of their comment (the text they wrote).\n"
+    "2. Date (use the provided current date to calculate from relative times like '2d').\n"
+    "3. The FULL text of the original post they were commenting on (DO NOT summarize, extract the full available text).\n"
+    "CRITICAL: ONLY extract public comments made by the user.\n"
+    "DO NOT invent any comments if fewer than 5 exist."
 )
 
-SOCIAL_SYSTEM = BASE_SYSTEM + (
-    "\nYou are writing the 'Social Footprint' section.\n"
-    "Based on search result snippets (not full profiles), identify which "
-    "social platforms this person has a presence on.\n"
-    "For each platform: name, profile URL, handle if visible, notable activity.\n"
-    "Also note platforms where NO presence was found.\n"
-    "IMPORTANT: You are working from search snippets only. Do not claim "
-    "information not visible in the provided material."
-)
-
-ACTIVITY_SYSTEM = BASE_SYSTEM + (
-    "\nYou are writing the 'Recent Activity' section based on raw LinkedIn activity page text.\n"
-    "Extract the last 5 posts and 5 recent comments made by the target person.\n"
-    "Format as a simple Markdown list separated into 'Posts' and 'Comments'.\n"
-    "Crucially: Use the provided CURRENT DATE to accurately calculate the year and exact date from relative times (e.g. '1w', '2mo').\n"
-    "Crucially: ONLY extract public posts and public comments. IGNORE any text that resembles a private message, direct message, or chat interface.\n"
-    "Do not invent any activity if it is not present in the text.\n"
-    "If insufficient public activity is found, provide what is available and note the limitation."
+ARTICLES_SYSTEM = BASE_SYSTEM + (
+    "\nYou are writing the 'News & Articles' section.\n"
+    "Based on search results, identify the 3-5 most recent and relevant articles about the person.\n"
+    "Summarize EACH article in a single paragraph of NO MORE than 100 words.\n"
+    "Format output as a list, where each item includes the article title, publication URL (if available), and the ~100-word summary.\n"
+    "DO NOT invent any facts or articles."
 )
 
 # ── User prompt templates ─────────────────────────────────────────────
@@ -76,27 +64,15 @@ def make_user_prompt(name: str, company: str | None, text: str) -> str:
     )
 
 
-def make_social_user_prompt(
-    name: str, company: str | None, snippets: str
-) -> str:
-    company_clause = f" at {company}" if company else ""
-    return (
-        f"Below are search results (title, URL, snippet) for "
-        f"{name}{company_clause} across social media platforms.\n"
-        f"Identify their social media presence.\n\n"
-        f"=== SEARCH RESULTS ===\n{snippets}\n=== END SEARCH RESULTS ==="
-    )
-
-
-def make_activity_user_prompt(name: str, company: str | None, text: str) -> str:
+def make_linkedin_user_prompt(name: str, company: str | None, text: str) -> str:
     from datetime import datetime
     current_date = datetime.now().strftime("%B %d, %Y")
     company_clause = f" at {company}" if company else ""
     return (
-        f"Below is raw text extracted from the public LinkedIn activity pages of {name}{company_clause}.\n"
+        f"Below is raw text extracted from the LinkedIn pages of {name}{company_clause}.\n"
         f"CURRENT DATE IS: {current_date}\n\n"
-        f"Synthesize this into a report section.\n\n"
-        f"=== RAW ACTIVITY TEXT ===\n{text}\n=== END RAW ACTIVITY TEXT ==="
+        f"Synthesize this into a report section as instructed.\n\n"
+        f"=== RAW EXTRACTED TEXT ===\n{text}\n=== END RAW EXTRACTED TEXT ==="
     )
 
 # ── Map-reduce intermediate prompt ───────────────────────────────────
