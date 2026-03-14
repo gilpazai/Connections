@@ -160,7 +160,19 @@ export const research = {
 
 // --- Settings ---
 
+export interface LLMConfig {
+  provider: string;
+  model: string;
+  available_providers: string[];
+  available_models: Record<string, string[]>;
+}
+
 export const settings = {
   connectivity: () => request<ConnectivityStatus>("/api/settings/connectivity"),
-  llm: () => request<{ provider: string; model: string }>("/api/settings/llm"),
+  llm: () => request<LLMConfig>("/api/settings/llm"),
+  updateLlm: (provider: string, model: string) =>
+    request<LLMConfig>("/api/settings/llm", {
+      method: "PATCH",
+      body: JSON.stringify({ provider, model }),
+    }),
 };

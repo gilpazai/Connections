@@ -2,11 +2,14 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { contacts as api } from "@/lib/api";
+import { contacts as api, workHistory as whApi } from "@/lib/api";
 import type { Contact } from "@/types";
 import { StatusBadge } from "@/components/status-badge";
+import { EnrichDialog } from "@/components/enrich-dialog";
+import { WorkHistoryDialog } from "@/components/work-history-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -45,10 +48,18 @@ export default function ContactsPage() {
   const [statusFilter, setStatusFilter] = useState("Active");
   const [addOpen, setAddOpen] = useState(false);
   const [editedRows, setEditedRows] = useState<Record<string, Partial<Contact>>>({});
+  const [enrichTarget, setEnrichTarget] = useState<{ name: string; pageId: string } | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<string | null>(null);
 
   const { data: contactsList = [], isLoading } = useQuery({
     queryKey: ["contacts", statusFilter],
     queryFn: () => api.list(statusFilter),
+  });
+
+  // Fetch grouped work history for all contacts in one call
+  const { data: groupedWH = {} } = useQuery({
+    queryKey: ["work-history", "Contact"],
+    queryFn: () => whApi.grouped("Contact"),
   });
 
   const createMutation = useMutation({
@@ -158,97 +169,148 @@ export default function ContactsPage() {
             <TableHead>Company</TableHead>
             <TableHead>Title</TableHead>
             <TableHead>Strength</TableHead>
+            <TableHead>Employment</TableHead>
             <TableHead>Status</TableHead>
-            <TableHead>LinkedIn</TableHead>
             <TableHead>Notes</TableHead>
             <TableHead className="w-10"></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {contactsList.map((c) => (
-            <TableRow key={c.notion_page_id}>
-              <TableCell className="font-medium">{c.name}</TableCell>
-              <TableCell>
-                <Input
-                  defaultValue={c.company_current}
-                  className="h-8 text-sm"
-                  onBlur={(e) => {
-                    if (e.target.value !== c.company_current)
-                      handleCellEdit(c.notion_page_id, "company_current", e.target.value);
-                  }}
-                />
-              </TableCell>
-              <TableCell>
-                <Input
-                  defaultValue={c.title_current}
-                  className="h-8 text-sm"
-                  onBlur={(e) => {
-                    if (e.target.value !== c.title_current)
-                      handleCellEdit(c.notion_page_id, "title_current", e.target.value);
-                  }}
-                />
-              </TableCell>
-              <TableCell>
-                <Select
-                  defaultValue={c.relationship_strength}
-                  onValueChange={(v) => v && handleCellEdit(c.notion_page_id, "relationship_strength", v)}
-                >
-                  <SelectTrigger className="h-8 text-sm w-24">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {STRENGTH_OPTIONS.map((s) => (
-                      <SelectItem key={s} value={s}>{s}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </TableCell>
-              <TableCell>
-                <StatusBadge status={c.status} />
-              </TableCell>
-              <TableCell>
-                {c.linkedin_url ? (
-                  <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline text-sm">
-                    Profile
-                  </a>
-                ) : (
-                  <span className="text-muted-foreground text-sm">-</span>
-                )}
-              </TableCell>
-              <TableCell>
-                <Input
-                  defaultValue={c.notes}
-                  className="h-8 text-sm"
-                  placeholder="Notes..."
-                  onBlur={(e) => {
-                    if (e.target.value !== c.notes)
-                      handleCellEdit(c.notion_page_id, "notes", e.target.value);
-                  }}
-                />
-              </TableCell>
-              <TableCell>
-                <DropdownMenu>
-                  <DropdownMenuTrigger render={<Button variant="ghost" size="sm" />}>...</DropdownMenuTrigger>
-                  <DropdownMenuContent>
-                    <DropdownMenuItem
-                      className="text-destructive"
-                      onClick={() => {
-                        if (confirm(`Delete ${c.name}?`))
-                          deleteMutation.mutate({ pageId: c.notion_page_id, name: c.name });
-                      }}
+          {contactsList.map((c) => {
+            const positions = groupedWH[c.name] ?? [];
+            return (
+              <TableRow key={c.notion_page_id}>
+                <TableCell className="font-medium">
+                  <div className="flex flex-col gap-0.5">
+                    <span>{c.name}</span>
+                    {c.linkedin_url && (
+                      <a
+                        href={c.linkedin_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-blue-600 hover:underline"
+                      >
+                        LinkedIn
+                      </a>
+                    )}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Input
+                    defaultValue={c.company_current}
+                    className="h-8 text-sm"
+                    onBlur={(e) => {
+                      if (e.target.value !== c.company_current)
+                        handleCellEdit(c.notion_page_id, "company_current", e.target.value);
+                    }}
+                  />
+                </TableCell>
+                <TableCell>
+                  <Input
+                    defaultValue={c.title_current}
+                    className="h-8 text-sm"
+                    onBlur={(e) => {
+                      if (e.target.value !== c.title_current)
+                        handleCellEdit(c.notion_page_id, "title_current", e.target.value);
+                    }}
+                  />
+                </TableCell>
+                <TableCell>
+                  <Select
+                    defaultValue={c.relationship_strength}
+                    onValueChange={(v) => v && handleCellEdit(c.notion_page_id, "relationship_strength", v)}
+                  >
+                    <SelectTrigger className="h-8 text-sm w-24">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {STRENGTH_OPTIONS.map((s) => (
+                        <SelectItem key={s} value={s}>{s}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell>
+                  {positions.length > 0 ? (
+                    <button
+                      onClick={() => setHistoryTarget(c.name)}
+                      className="text-left"
                     >
-                      Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </TableCell>
-            </TableRow>
-          ))}
+                      <Badge variant="secondary" className="cursor-pointer hover:bg-secondary/80">
+                        {positions.length} position{positions.length !== 1 ? "s" : ""}
+                      </Badge>
+                      <p className="text-xs text-muted-foreground mt-0.5 max-w-[140px] truncate">
+                        {positions[0]?.employer_name}
+                      </p>
+                    </button>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">Not enriched</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <StatusBadge status={c.status} />
+                </TableCell>
+                <TableCell>
+                  <Input
+                    defaultValue={c.notes}
+                    className="h-8 text-sm"
+                    placeholder="Notes..."
+                    onBlur={(e) => {
+                      if (e.target.value !== c.notes)
+                        handleCellEdit(c.notion_page_id, "notes", e.target.value);
+                    }}
+                  />
+                </TableCell>
+                <TableCell>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger render={<Button variant="ghost" size="sm" />}>...</DropdownMenuTrigger>
+                    <DropdownMenuContent>
+                      <DropdownMenuItem onClick={() => setHistoryTarget(c.name)}>
+                        View History
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => setEnrichTarget({ name: c.name, pageId: c.notion_page_id })}
+                      >
+                        Enrich
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="text-destructive"
+                        onClick={() => {
+                          if (confirm(`Delete ${c.name}?`))
+                            deleteMutation.mutate({ pageId: c.notion_page_id, name: c.name });
+                        }}
+                      >
+                        Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
 
       {contactsList.length === 0 && (
         <p className="text-center text-muted-foreground py-8">No contacts found. Add one to get started.</p>
+      )}
+
+      {historyTarget && (
+        <WorkHistoryDialog
+          open={!!historyTarget}
+          onOpenChange={(open) => { if (!open) setHistoryTarget(null); }}
+          personName={historyTarget}
+        />
+      )}
+
+      {enrichTarget && (
+        <EnrichDialog
+          open={!!enrichTarget}
+          onOpenChange={(open) => { if (!open) setEnrichTarget(null); }}
+          personName={enrichTarget.name}
+          personType="Contact"
+          notionPageId={enrichTarget.pageId}
+        />
       )}
     </div>
   );

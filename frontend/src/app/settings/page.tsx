@@ -2,13 +2,21 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { settings as settingsApi, matches as matchesApi, leads as leadsApi } from "@/lib/api";
+import type { LLMConfig } from "@/lib/api";
 import { MetricCard } from "@/components/metric-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export default function SettingsPage() {
   const queryClient = useQueryClient();
@@ -23,6 +31,25 @@ export default function SettingsPage() {
   const { data: llmConfig } = useQuery({
     queryKey: ["settings", "llm"],
     queryFn: settingsApi.llm,
+  });
+
+  const [provider, setProvider] = useState("");
+  const [model, setModel] = useState("");
+
+  useEffect(() => {
+    if (llmConfig && !provider) {
+      setProvider(llmConfig.provider);
+      setModel(llmConfig.model);
+    }
+  }, [llmConfig, provider]);
+
+  const saveLlmMutation = useMutation({
+    mutationFn: () => settingsApi.updateLlm(provider, model),
+    onSuccess: (data: LLMConfig) => {
+      queryClient.setQueryData(["settings", "llm"], data);
+      toast.success(`LLM updated to ${data.provider} / ${data.model}`);
+    },
+    onError: (err) => toast.error(`Save failed: ${err.message}`),
   });
 
   const deleteLeadsMutation = useMutation({
@@ -43,16 +70,96 @@ export default function SettingsPage() {
     },
   });
 
+  const isDirty = llmConfig && (provider !== llmConfig.provider || model !== llmConfig.model);
+
   return (
     <div className="space-y-4 max-w-4xl">
       <h1 className="text-2xl font-bold">Settings</h1>
 
-      <Tabs defaultValue="connectivity">
+      <Tabs defaultValue="llm">
         <TabsList>
-          <TabsTrigger value="connectivity">Connectivity</TabsTrigger>
           <TabsTrigger value="llm">LLM</TabsTrigger>
+          <TabsTrigger value="connectivity">Connectivity</TabsTrigger>
           <TabsTrigger value="data">Data Management</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="llm" className="space-y-4">
+          <h2 className="text-lg font-semibold">LLM Configuration</h2>
+          {llmConfig ? (
+            <Card>
+              <CardContent className="pt-6 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <Label>Provider</Label>
+                    <Select
+                      value={provider}
+                      onValueChange={(v) => {
+                        if (!v) return;
+                        setProvider(v);
+                        const first = llmConfig.available_models[v]?.[0] ?? "";
+                        setModel(first);
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(llmConfig.available_providers ?? []).map((p) => (
+                          <SelectItem key={p} value={p}>
+                            {p.charAt(0).toUpperCase() + p.slice(1)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Model</Label>
+                    <Select
+                      value={model}
+                      onValueChange={(v) => v && setModel(v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(llmConfig.available_models[provider] ?? (model ? [model] : [])).map((m) => (
+                          <SelectItem key={m} value={m}>{m}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Button
+                    onClick={() => saveLlmMutation.mutate()}
+                    disabled={!isDirty || saveLlmMutation.isPending}
+                  >
+                    {saveLlmMutation.isPending ? "Saving..." : "Save"}
+                  </Button>
+                  {isDirty && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setProvider(llmConfig.provider);
+                        setModel(llmConfig.model);
+                      }}
+                    >
+                      Reset
+                    </Button>
+                  )}
+                  {!isDirty && (
+                    <p className="text-xs text-muted-foreground">
+                      Changes take effect immediately and persist to .env
+                    </p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <p className="text-muted-foreground">Loading...</p>
+          )}
+        </TabsContent>
 
         <TabsContent value="connectivity" className="space-y-4">
           <h2 className="text-lg font-semibold">API Connectivity</h2>
@@ -64,31 +171,6 @@ export default function SettingsPage() {
               <MetricCard title="OpenAI" value={connectivity.openai ? "Connected" : "Not configured"} />
               <MetricCard title="Ollama" value={connectivity.ollama ? "Running" : "Not running"} />
             </div>
-          ) : (
-            <p className="text-muted-foreground">Loading...</p>
-          )}
-        </TabsContent>
-
-        <TabsContent value="llm" className="space-y-4">
-          <h2 className="text-lg font-semibold">LLM Configuration</h2>
-          {llmConfig ? (
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex gap-8">
-                  <div>
-                    <span className="text-sm text-muted-foreground">Provider</span>
-                    <p className="font-medium">{llmConfig.provider}</p>
-                  </div>
-                  <div>
-                    <span className="text-sm text-muted-foreground">Model</span>
-                    <p className="font-medium">{llmConfig.model}</p>
-                  </div>
-                </div>
-                <p className="text-xs text-muted-foreground mt-4">
-                  LLM settings are configured via environment variables on the backend.
-                </p>
-              </CardContent>
-            </Card>
           ) : (
             <p className="text-muted-foreground">Loading...</p>
           )}
