@@ -79,9 +79,11 @@ export default function LeadsPage() {
       api.importCsv(file, batch, priority),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
+      queryClient.invalidateQueries({ queryKey: ["work-history"] });
       toast.success(`Imported ${data.created} leads, ${data.skipped} skipped`);
       setAddOpen(false);
     },
+    onError: (err) => toast.error(`CSV import failed: ${err.message}`),
   });
 
   const importPasteMutation = useMutation({
@@ -92,6 +94,7 @@ export default function LeadsPage() {
       toast.success(`Imported ${data.created} leads, ${data.skipped} skipped`);
       setAddOpen(false);
     },
+    onError: (err) => toast.error(`Paste import failed: ${err.message}`),
   });
 
   const updateMutation = useMutation({

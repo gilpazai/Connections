@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
@@ -80,27 +79,26 @@ async def import_csv(
 ) -> dict:
     content = await file.read()
     text = content.decode("utf-8")
-    records = parse_dealigence_csv(io.StringIO(text))
+    leads, work_history = parse_dealigence_csv(text, batch=batch, default_priority=priority)
 
     created = 0
     skipped = 0
     imported_names: list[str] = []
 
-    for rec in records:
-        lead = Lead(
-            name=rec["name"],
-            linkedin_url=rec.get("linkedin_url", ""),
-            company_current=rec.get("company", ""),
-            title_current=rec.get("title", ""),
-            priority=priority,
-            batch=batch,
-        )
+    for lead in leads:
         try:
             store.create_lead(lead)
             created += 1
             imported_names.append(lead.name)
-        except ValueError:
+        except (ValueError, Exception):
             skipped += 1
+
+    # Store work history entries extracted from the CSV
+    if work_history:
+        try:
+            store.store_work_history(work_history)
+        except Exception:
+            pass  # best-effort; leads already created
 
     return {"created": created, "skipped": skipped, "imported_names": imported_names}
 
