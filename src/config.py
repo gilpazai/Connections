@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # Scraper method: "clipboard" (Cmd+A/Cmd+C) or "dom" (JavaScript extraction)
     scraper_method: str = "clipboard"
 
+    # Enrichment
+    enrich_batch_size: int = 5
+
     # App behavior
     log_level: str = "INFO"
 

@@ -5,7 +5,7 @@
 cd "$(dirname "$0")"
 
 echo "Starting FastAPI backend on http://localhost:8000 ..."
-PYTHONPATH=. .venv/bin/python -m uvicorn backend.api.main:app --port 8000 --reload &
+PYTHONPATH=. python3 -m uvicorn backend.api.main:app --port 8000 --reload &
 BACKEND_PID=$!
 
 echo "Starting Next.js frontend on http://localhost:3000 ..."

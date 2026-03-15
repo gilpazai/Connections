@@ -48,6 +48,17 @@ export const contacts = {
 
 // --- Leads ---
 
+export interface ImportStatus {
+  task_id: string;
+  status: "running" | "done" | "error";
+  total: number;
+  processed: number;
+  created: number;
+  skipped: number;
+  imported_names: string[];
+  error: string | null;
+}
+
 export const leads = {
   list: (params?: { batch?: string; status?: string }) => {
     const qs = new URLSearchParams();
@@ -59,14 +70,27 @@ export const leads = {
   create: (data: Partial<Lead>) =>
     request<Lead>("/api/leads", { method: "POST", body: JSON.stringify(data) }),
 
-  importCsv: async (file: File, batch: string, priority: string) => {
+  importCsv: async (
+    file: File,
+    batch: string,
+    priority: string,
+    onProgress?: (status: ImportStatus) => void,
+  ): Promise<ImportStatus> => {
     const form = new FormData();
     form.append("file", file);
     form.append("batch", batch);
     form.append("priority", priority);
     const res = await fetch(`${API_BASE}/api/leads/import-csv`, { method: "POST", body: form });
     if (!res.ok) throw new ApiError(res.status, await res.text());
-    return res.json() as Promise<{ created: number; skipped: number; imported_names: string[] }>;
+    const { task_id } = (await res.json()) as { task_id: string };
+
+    // Poll for completion
+    while (true) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const status = await request<ImportStatus>(`/api/leads/import-status/${task_id}`);
+      onProgress?.(status);
+      if (status.status === "done" || status.status === "error") return status;
+    }
   },
 
   importPaste: (lines: string[], batch: string, priority: string) =>
@@ -167,6 +191,10 @@ export interface LLMConfig {
   available_models: Record<string, string[]>;
 }
 
+export interface EnrichmentConfig {
+  batch_size: number;
+}
+
 export const settings = {
   connectivity: () => request<ConnectivityStatus>("/api/settings/connectivity"),
   llm: () => request<LLMConfig>("/api/settings/llm"),
@@ -174,5 +202,11 @@ export const settings = {
     request<LLMConfig>("/api/settings/llm", {
       method: "PATCH",
       body: JSON.stringify({ provider, model }),
+    }),
+  enrichment: () => request<EnrichmentConfig>("/api/settings/enrichment"),
+  updateEnrichment: (batch_size: number) =>
+    request<EnrichmentConfig>("/api/settings/enrichment", {
+      method: "PATCH",
+      body: JSON.stringify({ batch_size }),
     }),
 };

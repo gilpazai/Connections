@@ -67,6 +67,14 @@ class UpdateLLMRequest(BaseModel):
     model: str
 
 
+class EnrichmentConfig(BaseModel):
+    batch_size: int
+
+
+class UpdateEnrichmentRequest(BaseModel):
+    batch_size: int
+
+
 def _write_env(key: str, value: str) -> None:
     """Persist a key=value to the project .env file."""
     env_path = Path(__file__).parents[3] / ".env"
@@ -149,3 +157,18 @@ def update_llm_config(body: UpdateLLMRequest) -> LLMConfig:
     os.environ["LLM_PROVIDER"] = provider
 
     return get_llm_config()
+
+
+@router.get("/enrichment")
+def get_enrichment_config() -> EnrichmentConfig:
+    return EnrichmentConfig(batch_size=settings.enrich_batch_size)
+
+
+@router.patch("/enrichment")
+def update_enrichment_config(body: UpdateEnrichmentRequest) -> EnrichmentConfig:
+    if body.batch_size < 1:
+        from fastapi import HTTPException
+        raise HTTPException(400, "batch_size must be at least 1")
+    settings.enrich_batch_size = body.batch_size
+    _write_env("ENRICH_BATCH_SIZE", str(body.batch_size))
+    return EnrichmentConfig(batch_size=settings.enrich_batch_size)

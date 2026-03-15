@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
@@ -13,6 +15,9 @@ from src.data.csv_import import parse_dealigence_csv
 from src.models.lead import Lead
 
 router = APIRouter(prefix="/api/leads", tags=["leads"])
+
+# In-memory import task tracker
+_import_tasks: dict[str, dict] = {}
 
 
 class CreateLeadRequest(BaseModel):
@@ -70,7 +75,35 @@ def create_lead(
     return lead
 
 
-@router.post("/import-csv", status_code=201)
+def _run_import(task_id: str, text: str, batch: str, priority: str, store: NotionStore) -> None:
+    """Background worker that processes CSV import."""
+    task = _import_tasks[task_id]
+    try:
+        leads, work_history = parse_dealigence_csv(text, batch=batch, default_priority=priority)
+        task["total"] = len(leads)
+
+        for lead in leads:
+            try:
+                store.create_lead(lead)
+                task["created"] += 1
+                task["imported_names"].append(lead.name)
+            except (ValueError, Exception):
+                task["skipped"] += 1
+            task["processed"] += 1
+
+        if work_history:
+            try:
+                store.store_work_history(work_history)
+            except Exception:
+                pass
+
+        task["status"] = "done"
+    except Exception as exc:
+        task["status"] = "error"
+        task["error"] = str(exc)
+
+
+@router.post("/import-csv", status_code=202)
 async def import_csv(
     file: UploadFile = File(...),
     batch: str = Form(""),
@@ -79,28 +112,34 @@ async def import_csv(
 ) -> dict:
     content = await file.read()
     text = content.decode("utf-8")
-    leads, work_history = parse_dealigence_csv(text, batch=batch, default_priority=priority)
 
-    created = 0
-    skipped = 0
-    imported_names: list[str] = []
+    task_id = uuid.uuid4().hex[:12]
+    _import_tasks[task_id] = {
+        "status": "running",
+        "total": 0,
+        "processed": 0,
+        "created": 0,
+        "skipped": 0,
+        "imported_names": [],
+        "error": None,
+    }
 
-    for lead in leads:
-        try:
-            store.create_lead(lead)
-            created += 1
-            imported_names.append(lead.name)
-        except (ValueError, Exception):
-            skipped += 1
+    thread = threading.Thread(
+        target=_run_import,
+        args=(task_id, text, batch, priority, store),
+        daemon=True,
+    )
+    thread.start()
 
-    # Store work history entries extracted from the CSV
-    if work_history:
-        try:
-            store.store_work_history(work_history)
-        except Exception:
-            pass  # best-effort; leads already created
+    return {"task_id": task_id}
 
-    return {"created": created, "skipped": skipped, "imported_names": imported_names}
+
+@router.get("/import-status/{task_id}")
+def import_status(task_id: str) -> dict:
+    task = _import_tasks.get(task_id)
+    if not task:
+        raise HTTPException(404, "Import task not found")
+    return {"task_id": task_id, **task}
 
 
 @router.post("/import-paste", status_code=201)

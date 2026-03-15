@@ -3,6 +3,7 @@
 import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { leads as api, workHistory as whApi } from "@/lib/api";
+import type { ImportStatus } from "@/lib/api";
 import type { Lead } from "@/types";
 import { StatusBadge } from "@/components/status-badge";
 import { EnrichDialog } from "@/components/enrich-dialog";
@@ -54,6 +55,7 @@ export default function LeadsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [enrichTarget, setEnrichTarget] = useState<{ name: string; pageId: string } | null>(null);
   const [historyTarget, setHistoryTarget] = useState<string | null>(null);
+  const [importProgress, setImportProgress] = useState<ImportStatus | null>(null);
 
   const { data: leadsList = [], isLoading } = useQuery({
     queryKey: ["leads", statusFilter],
@@ -76,14 +78,22 @@ export default function LeadsPage() {
 
   const importCsvMutation = useMutation({
     mutationFn: ({ file, batch, priority }: { file: File; batch: string; priority: string }) =>
-      api.importCsv(file, batch, priority),
+      api.importCsv(file, batch, priority, (progress) => setImportProgress(progress)),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
       queryClient.invalidateQueries({ queryKey: ["work-history"] });
-      toast.success(`Imported ${data.created} leads, ${data.skipped} skipped`);
+      setImportProgress(null);
+      if (data.status === "error") {
+        toast.error(`CSV import failed: ${data.error}`);
+      } else {
+        toast.success(`Imported ${data.created} leads, ${data.skipped} skipped`);
+      }
       setAddOpen(false);
     },
-    onError: (err) => toast.error(`CSV import failed: ${err.message}`),
+    onError: (err) => {
+      setImportProgress(null);
+      toast.error(`CSV import failed: ${err.message}`);
+    },
   });
 
   const importPasteMutation = useMutation({
@@ -232,6 +242,26 @@ export default function LeadsPage() {
                       {PRIORITY_OPTIONS.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
                     </SelectContent>
                   </Select>
+                  {importProgress && (
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-sm text-muted-foreground">
+                        <span>Processing leads...</span>
+                        <span>
+                          {importProgress.processed} / {importProgress.total}
+                          {importProgress.total > 0 && ` (${Math.round((importProgress.processed / importProgress.total) * 100)}%)`}
+                        </span>
+                      </div>
+                      <div className="w-full bg-secondary rounded-full h-2">
+                        <div
+                          className="bg-primary h-2 rounded-full transition-all duration-300"
+                          style={{ width: `${importProgress.total > 0 ? (importProgress.processed / importProgress.total) * 100 : 0}%` }}
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {importProgress.created} created, {importProgress.skipped} skipped
+                      </p>
+                    </div>
+                  )}
                   <Button type="submit" disabled={importCsvMutation.isPending}>
                     {importCsvMutation.isPending ? "Importing..." : "Import CSV"}
                   </Button>

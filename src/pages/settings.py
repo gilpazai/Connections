@@ -257,10 +257,9 @@ with tab_llm:
                      delta_color="off")
 
         with col3:
-            batch_sizes = [10, 50, 100]
-            batch_cost = total_cost_per_enrichment * 50
-            st.metric("Cost per 50 people", f"${batch_cost:.2f}",
-                     delta="Typical batch size",
+            batch_cost = total_cost_per_enrichment * settings.enrich_batch_size
+            st.metric(f"Cost per {settings.enrich_batch_size} people", f"${batch_cost:.2f}",
+                     delta="Current batch size",
                      delta_color="off")
 
         st.caption(f"Pricing based on {new_model}. Costs are estimates for average LinkedIn profiles.")
@@ -316,6 +315,36 @@ with tab_llm:
         env_path = os.path.abspath(_ENV_PATH)
         set_key(env_path, "SCRAPER_METHOD", new_scraper)
         st.success(f"Saved `SCRAPER_METHOD={new_scraper}` to .env — restart the app to apply.")
+
+    st.divider()
+
+    # Enrichment Batch Size
+    st.subheader("Enrichment Batch Size")
+    st.caption("How many LinkedIn profiles to enrich per session. Used as the default when opening the enrich dialog.")
+
+    col_bs, col_bs_save = st.columns([1, 2])
+    with col_bs:
+        new_batch_size = st.number_input(
+            "Profiles per batch",
+            min_value=1,
+            max_value=100,
+            value=int(settings.enrich_batch_size),
+            step=1,
+            key="enrich_batch_size_input",
+        )
+    with col_bs_save:
+        st.write("")
+        st.write("")
+        if new_batch_size != settings.enrich_batch_size:
+            st.caption(f"**Current:** `{settings.enrich_batch_size}` → `{new_batch_size}` *(unsaved)*")
+
+    if st.button("Save Batch Size", key="btn_save_batch_size"):
+        from dotenv import set_key
+        env_path = os.path.abspath(_ENV_PATH)
+        set_key(env_path, "ENRICH_BATCH_SIZE", str(new_batch_size))
+        settings.enrich_batch_size = new_batch_size
+        st.success(f"Saved `ENRICH_BATCH_SIZE={new_batch_size}` to .env.")
+        st.rerun()
 
     st.divider()
 

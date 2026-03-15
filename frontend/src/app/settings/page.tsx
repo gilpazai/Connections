@@ -2,7 +2,8 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { settings as settingsApi, matches as matchesApi, leads as leadsApi } from "@/lib/api";
-import type { LLMConfig } from "@/lib/api";
+import type { LLMConfig, EnrichmentConfig } from "@/lib/api";
+import { Input } from "@/components/ui/input";
 import { MetricCard } from "@/components/metric-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -43,6 +44,30 @@ export default function SettingsPage() {
     }
   }, [llmConfig, provider]);
 
+  const { data: enrichmentConfig } = useQuery({
+    queryKey: ["settings", "enrichment"],
+    queryFn: settingsApi.enrichment,
+  });
+
+  const [batchSize, setBatchSize] = useState<number | "">(5);
+
+  useEffect(() => {
+    if (enrichmentConfig && batchSize === 5) {
+      setBatchSize(enrichmentConfig.batch_size);
+    }
+  }, [enrichmentConfig, batchSize]);
+
+  const saveEnrichmentMutation = useMutation({
+    mutationFn: () => settingsApi.updateEnrichment(batchSize as number),
+    onSuccess: (data: EnrichmentConfig) => {
+      queryClient.setQueryData(["settings", "enrichment"], data);
+      toast.success(`Enrichment batch size set to ${data.batch_size}`);
+    },
+    onError: (err) => toast.error(`Save failed: ${err.message}`),
+  });
+
+  const isEnrichmentDirty = enrichmentConfig && batchSize !== enrichmentConfig.batch_size;
+
   const saveLlmMutation = useMutation({
     mutationFn: () => settingsApi.updateLlm(provider, model),
     onSuccess: (data: LLMConfig) => {
@@ -79,6 +104,7 @@ export default function SettingsPage() {
       <Tabs defaultValue="llm">
         <TabsList>
           <TabsTrigger value="llm">LLM</TabsTrigger>
+          <TabsTrigger value="enrichment">Enrichment</TabsTrigger>
           <TabsTrigger value="connectivity">Connectivity</TabsTrigger>
           <TabsTrigger value="data">Data Management</TabsTrigger>
         </TabsList>
@@ -159,6 +185,54 @@ export default function SettingsPage() {
           ) : (
             <p className="text-muted-foreground">Loading...</p>
           )}
+        </TabsContent>
+
+        <TabsContent value="enrichment" className="space-y-4">
+          <h2 className="text-lg font-semibold">Enrichment Settings</h2>
+          <Card>
+            <CardContent className="pt-6 space-y-4">
+              <div className="space-y-1 max-w-xs">
+                <Label htmlFor="batch-size">LinkedIn Batch Size</Label>
+                <p className="text-xs text-muted-foreground">
+                  How many profiles to enrich per LinkedIn session. Shown as the default in the enrich dialog and overridable per session.
+                </p>
+                <Input
+                  id="batch-size"
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={batchSize}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    setBatchSize(isNaN(v) ? "" : v);
+                  }}
+                  className="w-24"
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <Button
+                  onClick={() => saveEnrichmentMutation.mutate()}
+                  disabled={!isEnrichmentDirty || !batchSize || saveEnrichmentMutation.isPending}
+                >
+                  {saveEnrichmentMutation.isPending ? "Saving..." : "Save"}
+                </Button>
+                {isEnrichmentDirty && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setBatchSize(enrichmentConfig!.batch_size)}
+                  >
+                    Reset
+                  </Button>
+                )}
+                {!isEnrichmentDirty && enrichmentConfig && (
+                  <p className="text-xs text-muted-foreground">
+                    Default batch size: {enrichmentConfig.batch_size}
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="connectivity" className="space-y-4">
